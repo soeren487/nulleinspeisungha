@@ -217,6 +217,9 @@
           "failure": "Failure"
         }
       },
+      "battery_backed_limit": {
+        "name": "Battery-backed Inverter Limit"
+      },
       "inverter_limit": {
         "name": "Inverter Limit"
       },

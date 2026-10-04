@@ -198,6 +198,7 @@ async def async_setup_entry(
             *(HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS),
             ControlStateSensor(house),
             InverterLimitSensor(house),
+            *([BatteryBackedLimitSensor(house)] if house.config.battery_backed else []),
             *(
                 [BatterySensor(house, d) for d in BATTERY_DESCRIPTIONS]
                 if house.gateway is not None
@@ -419,6 +420,25 @@ class InverterLimitSensor(_ControlSensor):
         """Percent asked of the group; unknown while Curtailment is off."""
         control = self.house.control
         return control.requested_percent if control.curtailment else None
+
+
+class BatteryBackedLimitSensor(_ControlSensor):
+    """The Inverter Limit the House currently asks of its Battery-backed group."""
+
+    _attr_translation_key = "battery_backed_limit"
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "battery_backed_limit")
+
+    @property
+    def native_value(self) -> int | None:
+        """Percent asked of the group; unknown while Curtailment is off."""
+        control = self.house.control
+        if not control.curtailment:
+            return None
+        return control.requested_percent_battery_backed
 
 
 class _PriceSensor(HouseEntity, SensorEntity):

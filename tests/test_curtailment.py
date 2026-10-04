@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from custom_components.nulleinspeisung.curtailment import (
     ControllableInverter,
     ControlState,
-    decide,
+    decide_house,
 )
 from custom_components.nulleinspeisung.limit_split import split_equally
 
@@ -18,6 +20,14 @@ def _inv(
     return ControllableInverter(rated_power=rated, production=production, limit=limit)
 
 
+@dataclass(frozen=True)
+class _Single:
+    """The answer for a House with only a PV group."""
+
+    state: ControlState
+    allowed_power: float | None
+
+
 def _decide(grid: float, *inverters: ControllableInverter, **kwargs: float):
     settings = {
         "setpoint": 0.0,
@@ -25,14 +35,17 @@ def _decide(grid: float, *inverters: ControllableInverter, **kwargs: float):
         "floor": 5.0,
         "battery_headroom": 0.0,
     } | kwargs
-    return decide(
+    decision = decide_house(
         grid,
         settings["setpoint"],
         settings["band"],
         settings["floor"],
         inverters,
+        [],
+        None,
         settings["battery_headroom"],
     )
+    return _Single(decision.state, decision.pv.allowed_power if decision.pv else None)
 
 
 @pytest.mark.parametrize("grid", [-30.0, -10.0, 0.0, 15.0, 30.0])
