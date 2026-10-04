@@ -22,7 +22,7 @@ from homeassistant.util import dt as dt_util
 from .alerts import raise_alert, resolve_alert
 from .battery_priority import import_target
 from .battery_watch import ISSUE_SETPOINT_CONFLICT, sync_issue
-from .curtailment import ControllableInverter, ControlState, decide
+from .curtailment import ControllableInverter, ControlState, GroupDecision, decide_house
 from .dtu_client import DtuAuthError, DtuConnectionError
 from .failure import Assessment, FailureWatch
 from .limit_split import LimitSplit, split_equally
@@ -67,6 +67,7 @@ class _Controllable:
     production: float | None
     data_age: float
     """Seconds old the reading is now, including time since the DTU refresh."""
+    battery_backed: bool = False
 
 
 class HouseControl:
@@ -90,7 +91,9 @@ class HouseControl:
         self.on_failure = ON_FAILURE_HOLD
         """What to do with the Inverters in the failure state."""
         self.requested_percent: int | None = None
-        """The percent the House currently asks of its group."""
+        """The percent the House currently asks of its PV group."""
+        self.requested_percent_battery_backed: int | None = None
+        """The percent the House currently asks of its Battery-backed group."""
         self._watch = FailureWatch()
         self._in_failure = False
         self._generations: dict[str, int] = {}
@@ -129,7 +132,13 @@ class HouseControl:
         """Whether the House currently asks less than 100 % of any Inverter."""
         if not self.curtailment:
             return False
-        if self.requested_percent is not None and self.requested_percent < FULL_LIMIT:
+        if any(
+            percent is not None and percent < FULL_LIMIT
+            for percent in (
+                self.requested_percent,
+                self.requested_percent_battery_backed,
+            )
+        ):
             return True
         return any(
             percent < FULL_LIMIT
@@ -192,6 +201,7 @@ class HouseControl:
             await self._async_release()
             self.state = ControlState.OFF
             self.requested_percent = None
+            self.requested_percent_battery_backed = None
             self._clear_failure()
         self._notify()
 
@@ -308,12 +318,9 @@ class HouseControl:
                 self.state = ControlState.HOLDING
                 await self._async_resend(group)
                 return
-        decision = decide(
-            grid_power,
-            -target + 0.0,
-            self.tolerance_band,
-            self.limit_floor,
-            [
+
+        def inputs(members: list[_Controllable]) -> list[ControllableInverter]:
+            return [
                 ControllableInverter(
                     rated_power=i.rated_power,
                     production=i.production if self._reading_is_new(i, now) else None,
@@ -321,32 +328,61 @@ class HouseControl:
                         i.serial, self._pending.get(i.serial, FULL_LIMIT)
                     ),
                 )
-                for i in group
-            ],
+                for i in members
+            ]
+
+        pv_group = [i for i in group if not i.battery_backed]
+        bb_group = [i for i in group if i.battery_backed]
+        decision = decide_house(
+            grid_power,
+            -target + 0.0,
+            self.tolerance_band,
+            self.limit_floor,
+            inputs(pv_group),
+            inputs(bb_group),
+            self._house.consumption(),
             0.0 if self.headroom_suppressed() else headroom,
         )
         self.state = decision.state
-        if decision.allowed_power is None:
+        if decision.state is ControlState.NO_INVERTER:
             self.requested_percent = None
+            self.requested_percent_battery_backed = None
             await self._async_resend(group)
             return
+        self.requested_percent = await self._async_apply(
+            pv_group, decision.pv, self.requested_percent
+        )
+        self.requested_percent_battery_backed = await self._async_apply(
+            bb_group,
+            decision.battery_backed,
+            self.requested_percent_battery_backed,
+        )
+        await self._async_resend(group)
+
+    async def _async_apply(
+        self,
+        members: list[_Controllable],
+        decision: GroupDecision | None,
+        requested: int | None,
+    ) -> int | None:
+        """Split a group's allowance, send what differs; the percent it asks."""
+        if decision is None:
+            return None
         percents = self._split(
             decision.allowed_power,
-            {i.serial: i.rated_power for i in group},
+            {i.serial: i.rated_power for i in members},
             self.limit_floor,
         )
-        if percents and (
-            self.requested_percent is None or decision.state is not ControlState.HOLDING
-        ):
-            self.requested_percent = round(sum(percents.values()) / len(percents))
-        if decision.state is not ControlState.HOLDING:
-            for inverter in group:
+        if percents and (requested is None or decision.changed):
+            requested = round(sum(percents.values()) / len(percents))
+        if decision.changed:
+            for inverter in members:
                 percent = percents[inverter.serial]
                 if self._sent.get(inverter.serial) == percent:
                     continue
                 if await self._async_send(inverter.dtu_key, inverter.serial, percent):
                     self._remember(inverter.serial, percent)
-        await self._async_resend(group)
+        return requested
 
     def _remember(self, serial: str, percent: int) -> None:
         self._sent[serial] = percent
@@ -376,6 +412,7 @@ class HouseControl:
             await self._async_release()
             self._pending.clear()
             self.requested_percent = FULL_LIMIT
+            self.requested_percent_battery_backed = FULL_LIMIT
 
     def _reading_is_new(self, inverter: _Controllable, now: float) -> bool:
         """Whether the production was measured after the last limit was sent."""
@@ -407,6 +444,7 @@ class HouseControl:
                             rated_power=inverter.rated_power,
                             production=inverter.power,
                             data_age=inverter.data_age + since_refresh,
+                            battery_backed=serial in self._house.config.battery_backed,
                         )
                     )
                 break

@@ -217,6 +217,9 @@
           "failure": "Störung"
         }
       },
+      "battery_backed_limit": {
+        "name": "Limit der batteriegestützten Wechselrichter"
+      },
       "inverter_limit": {
         "name": "Wechselrichter-Limit"
       },
