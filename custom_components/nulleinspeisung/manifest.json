@@ -1,10 +1,14 @@
 {
   "domain": "nulleinspeisung",
   "name": "Nulleinspeisung",
-  "codeowners": [],
+  "codeowners": [
+    "@soeren487"
+  ],
   "config_flow": true,
+  "documentation": "https://github.com/soeren487/nulleinspeisungha",
   "integration_type": "hub",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/soeren487/nulleinspeisungha/issues",
   "requirements": [],
   "single_config_entry": true,
   "version": "0.1.0"

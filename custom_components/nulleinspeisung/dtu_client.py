@@ -12,6 +12,9 @@ import aiohttp
 from .const import DTU_REQUEST_TIMEOUT, DTU_USER
 from .dtu_models import DtuIdentity, DtuSnapshot, InverterSnapshot
 
+_LIMIT_RELATIVE_NON_PERSISTENT = 1
+"""OpenDTU's ``limit_type`` for percent of rated power, held in Inverter RAM."""
+
 
 class DtuConnectionError(Exception):
     """The DTU did not answer, or answered something unusable."""
@@ -41,7 +44,7 @@ def normalize_base_url(address: str) -> str:
 
 
 class DtuClient:
-    """Reads one DTU and can restart it. It writes nothing else."""
+    """Reads one DTU, restarts it and sets non-persistent Inverter limits."""
 
     def __init__(
         self, session: aiohttp.ClientSession, base_url: str, password: str
@@ -116,6 +119,25 @@ class DtuClient:
         """
         await self._post("/api/maintenance/reboot", {"reboot": True})
 
+    async def async_set_limit(self, serial: str, percent: int) -> None:
+        """Give one Inverter a relative, non-persistent limit in whole percent.
+
+        The limit lives in the Inverter's RAM and is lost on a restart of the
+        Inverter. There is deliberately no way to ask for a persistent limit.
+
+        Raises DtuConnectionError or DtuAuthError.
+        """
+        reply = await self._post(
+            "/api/limit/config",
+            {
+                "serial": serial,
+                "limit_type": _LIMIT_RELATIVE_NON_PERSISTENT,
+                "limit_value": int(percent),
+            },
+        )
+        if reply is None or reply.get("type") != "success":
+            raise DtuConnectionError(f"DTU refused the limit: {reply}")
+
     async def _async_read_power(self, serial: str) -> float | None:
         """Sum the AC power over all channels of one Inverter.
 
@@ -160,8 +182,11 @@ class DtuClient:
             raise DtuConnectionError("Unexpected answer from DTU")
         return data
 
-    async def _post(self, path: str, payload: dict[str, Any]) -> None:
-        """POST a command as OpenDTU expects it: JSON in a form field ``data``."""
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """POST a command as OpenDTU expects it: JSON in a form field ``data``.
+
+        Returns the JSON reply, ``None`` if the reply is not a JSON object.
+        """
         try:
             async with self._session.post(
                 f"{self.base_url}{path}",
@@ -173,5 +198,10 @@ class DtuClient:
                     raise DtuAuthError("Wrong administrator password")
                 if response.status != HTTPStatus.OK:
                     raise DtuConnectionError(f"DTU answered HTTP {response.status}")
+                try:
+                    reply = await response.json(content_type=None)
+                except ValueError:
+                    return None
         except (aiohttp.ClientError, TimeoutError) as err:
             raise DtuConnectionError(f"Cannot reach DTU: {err}") from err
+        return reply if isinstance(reply, dict) else None

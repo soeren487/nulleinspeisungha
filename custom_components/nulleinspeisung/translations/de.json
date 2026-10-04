@@ -177,6 +177,20 @@
       },
       "inverter_count": {
         "name": "Zugeordnete Wechselrichter"
+      },
+      "control_state": {
+        "name": "Regelzustand",
+        "state": {
+          "off": "Aus",
+          "holding": "Halten",
+          "lowering": "Senken",
+          "raising": "Anheben",
+          "no_grid_power": "Keine Netzleistung",
+          "no_inverter": "Kein Wechselrichter"
+        }
+      },
+      "inverter_limit": {
+        "name": "Wechselrichter-Limit"
       }
     },
     "button": {
@@ -187,6 +201,23 @@
     "switch": {
       "automatic_restart": {
         "name": "Automatischer Neustart"
+      },
+      "curtailment": {
+        "name": "Abregelung"
+      }
+    },
+    "number": {
+      "feed_in_setpoint": {
+        "name": "Einspeise-Sollwert"
+      },
+      "update_interval": {
+        "name": "Aktualisierungsintervall"
+      },
+      "tolerance_band": {
+        "name": "Toleranzband"
+      },
+      "limit_floor": {
+        "name": "Untergrenze des Limits"
       }
     }
   },

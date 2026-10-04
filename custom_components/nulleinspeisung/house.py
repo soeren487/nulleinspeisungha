@@ -1,7 +1,6 @@
 """A House: its configuration and the values computed from it.
 
-This is the seed of the House coordinator. It only knows and computes; it
-controls nothing.
+The values here are only computed; the control loop is ``HouseControl``.
 """
 
 from __future__ import annotations
@@ -28,7 +27,9 @@ from .const import (
     SIGN_IMPORT,
     SUBENTRY_TYPE_HOUSE,
 )
+from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
+from .house_control import HouseControl
 
 _WATTS_PER_UNIT = {"W": 1.0, "kW": 1000.0, "MW": 1_000_000.0, "mW": 0.001}
 
@@ -36,6 +37,7 @@ _WATTS_PER_UNIT = {"W": 1.0, "kW": 1000.0, "MW": 1_000_000.0, "mW": 0.001}
 class DtuSource(Protocol):
     """What a House needs from a DTU's coordinator."""
 
+    client: DtuClient
     data: DtuSnapshot | None
     last_update_success: bool
 
@@ -125,6 +127,7 @@ class House:
         self.hass = hass
         self.config = config
         self.dtus = dtus
+        self.control = HouseControl(self)
 
     @property
     def inverter_count(self) -> int:

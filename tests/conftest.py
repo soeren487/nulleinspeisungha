@@ -14,6 +14,9 @@ import pytest
 from aiohttp.client_exceptions import ClientError
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.test_util.aiohttp import (
+    AiohttpClientMockResponse,
+)
 
 import custom_components  # noqa: F401
 from custom_components.nulleinspeisung.const import (
@@ -93,6 +96,10 @@ class SimDtu:
     password_ok: bool = True
     down: bool = False
     reboot_fails: bool = False
+    limit_fails: bool = False
+    """Limit commands are answered with a warning and not applied."""
+    reflect_limits: bool = True
+    """An accepted limit shows up in the limit the DTU reports afterwards."""
     after_reboot: str | None = None
     """``"aging"``: every Inverter's data age is the time since the last reboot,
     as on a real DTU that cannot reach its Inverters. ``"fresh"``: they deliver
@@ -157,7 +164,7 @@ class DtuNetwork:
         """Initialize the network."""
         self.aioclient_mock = aioclient_mock
         self.dtus: dict[str, SimDtu] = {}
-        self._reboot_log: dict[str, list[tuple[Any, Any]]] = {}
+        self._post_log: dict[str, list[tuple[str, Any, Any]]] = {}
 
     def add(self, dtu: SimDtu) -> None:
         """Add a DTU to the network."""
@@ -165,7 +172,7 @@ class DtuNetwork:
 
     def apply(self) -> None:
         """Register all current DTU state with the mock client."""
-        self._keep_reboots()
+        self._keep_posts()
         self.aioclient_mock.clear_requests()
 
         for dtu in self.dtus.values():
@@ -182,6 +189,9 @@ class DtuNetwork:
                     self.aioclient_mock.get(f"{base_url}{path}", exc=ClientError())
                 self.aioclient_mock.post(
                     f"{base_url}/api/maintenance/reboot", exc=ClientError()
+                )
+                self.aioclient_mock.post(
+                    f"{base_url}/api/limit/config", exc=ClientError()
                 )
                 for inverter in dtu.inverters:
                     self.aioclient_mock.get(
@@ -209,22 +219,68 @@ class DtuNetwork:
                 status=500 if dtu.reboot_fails else 200,
                 json={"type": "success", "message": "Reboot triggered!"},
             )
+            self.aioclient_mock.post(
+                f"{base_url}/api/limit/config",
+                side_effect=lambda method, url, data, dtu=dtu: self._answer_limit(
+                    dtu, method, url, data
+                ),
+            )
 
-    def _keep_reboots(self) -> None:
-        """Move the reboot requests seen so far into the log."""
+    def _keep_posts(self) -> None:
+        """Move the POST requests seen so far into the log."""
         for dtu in self.dtus.values():
-            url = f"{dtu.base_url.rstrip('/')}/api/maintenance/reboot"
-            self._reboot_log.setdefault(dtu.serial, []).extend(
-                (call[2], call[3])
+            prefix = dtu.base_url.rstrip("/")
+            self._post_log.setdefault(dtu.serial, []).extend(
+                (str(call[1])[len(prefix) :], call[2], call[3])
                 for call in self.aioclient_mock.mock_calls
-                if call[0] == "POST" and str(call[1]) == url
+                if call[0] == "POST" and str(call[1]).startswith(prefix)
             )
         self.aioclient_mock.mock_calls.clear()
 
+    def posts(self, serial: str, path: str) -> list[tuple[Any, Any]]:
+        """All POST requests to a path of a DTU, as (form body, headers)."""
+        self._keep_posts()
+        return [
+            (body, headers)
+            for p, body, headers in self._post_log.get(serial, [])
+            if p == path
+        ]
+
     def reboots(self, serial: str = "199980126212") -> list[tuple[Any, Any]]:
         """All reboot requests sent to a DTU, as (body, headers)."""
-        self._keep_reboots()
-        return list(self._reboot_log.get(serial, []))
+        return self.posts(serial, "/api/maintenance/reboot")
+
+    def limits(self, serial: str = "199980126212") -> list[tuple[str, int, int]]:
+        """Limit commands sent to a DTU, as (inverter serial, type, value)."""
+        commands = (
+            json.loads(body["data"])
+            for body, _ in self.posts(serial, "/api/limit/config")
+        )
+        return [(c["serial"], c["limit_type"], c["limit_value"]) for c in commands]
+
+    def clear_limits(self) -> None:
+        """Forget the limit commands seen so far."""
+        self._keep_posts()
+        for log in self._post_log.values():
+            log[:] = [entry for entry in log if entry[0] != "/api/limit/config"]
+
+    async def _answer_limit(
+        self, dtu: SimDtu, method: str, url: Any, data: Any
+    ) -> AiohttpClientMockResponse:
+        """Answer a limit command; apply it unless the DTU is set to fail."""
+        if dtu.limit_fails:
+            return AiohttpClientMockResponse(
+                method, url, json={"type": "warning", "message": "No values found!"}
+            )
+        command = json.loads(data["data"])
+        for inverter in dtu.inverters:
+            if inverter.serial == command["serial"] and dtu.reflect_limits:
+                inverter.limit = float(command["limit_value"])
+        if dtu.reflect_limits:
+            self.apply()
+        return AiohttpClientMockResponse(
+            method, url, json={"type": "success", "message": "Settings saved!"}
+        )
 
     def simulate(self) -> None:
         """Let DTUs that were rebooted since the last call age their data."""
@@ -306,7 +362,8 @@ class DtuNetwork:
         for inverter in dtu.inverters:
             limit[inverter.serial] = {
                 "limit_relative": inverter.limit,
-                "max_power": inverter.rated_power or 600,
+                "max_power": inverter.rated_power
+                or (600 if inverter.devinfo_valid else 0),
                 "limit_set_status": "Ok",
             }
 
