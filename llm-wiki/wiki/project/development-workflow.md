@@ -3,7 +3,7 @@ type: Process
 title: Development workflow
 description: Which model does which activity, and where issues, domain docs and project knowledge live.
 tags: [project, process]
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T07:52:47Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T20:30:00Z }
 sources:
   - id: soeren-principles
     resource: instruction from Soeren in the Claude Code session of 2026-10-04
@@ -19,10 +19,10 @@ sources:
 | Activity | Model |
 | --- | --- |
 | Planning, review | Opus 5.5 |
-| Implementation | Sonnet 5.5 |
-| Testing | Haiku 4.5 |
+| Implementation, including writing the tests | Sonnet 5.5 |
+| Running the tests and linters | Haiku 4.5 |
 
-The main session orchestrates and may spawn sub-agents on the matching model for each activity.[^soeren-principles]
+The main session orchestrates and may spawn sub-agents on the matching model for each activity.[^soeren-principles] Haiku originally wrote the tests as well; Soeren moved test writing to Sonnet after ticket 02.[^soeren-principles]
 
 # Where things live
 

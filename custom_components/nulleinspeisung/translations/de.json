@@ -6,5 +6,73 @@
         "description": "Nulleinspeisung zu Home Assistant hinzufügen. DTUs und Häuser werden anschließend hinzugefügt."
       }
     }
+  },
+  "config_subentries": {
+    "dtu": {
+      "entry_type": "DTU",
+      "initiate_flow": {
+        "user": "DTU hinzufügen",
+        "reconfigure": "DTU neu konfigurieren"
+      },
+      "step": {
+        "user": {
+          "title": "DTU hinzufügen",
+          "description": "Gib die Adresse und das Administrator-Passwort der OpenDTU ein.",
+          "data": {
+            "url": "Adresse",
+            "password": "Passwort"
+          },
+          "data_description": {
+            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
+            "password": "Administrator-Passwort der DTU (Benutzer admin)"
+          }
+        },
+        "reconfigure": {
+          "title": "DTU neu konfigurieren",
+          "description": "Ändere die Adresse oder das Administrator-Passwort dieser DTU.",
+          "data": {
+            "url": "Adresse",
+            "password": "Passwort"
+          },
+          "data_description": {
+            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
+            "password": "Administrator-Passwort der DTU (Benutzer admin)"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Verbindung zur DTU nicht möglich. Prüfe die Adresse.",
+        "invalid_auth": "Das Administrator-Passwort wurde abgelehnt."
+      },
+      "abort": {
+        "already_configured": "Diese DTU wurde bereits hinzugefügt.",
+        "wrong_dtu": "Die Adresse gehört zu einer anderen DTU.",
+        "reconfigure_successful": "Die DTU wurde aktualisiert."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "reachable": {
+        "name": "Erreichbar"
+      },
+      "producing": {
+        "name": "Produziert"
+      }
+    },
+    "sensor": {
+      "power": {
+        "name": "Leistung"
+      },
+      "limit": {
+        "name": "Wechselrichter-Limit"
+      },
+      "data_age": {
+        "name": "Alter der Daten"
+      },
+      "rated_power": {
+        "name": "Nennleistung"
+      }
+    }
   }
 }

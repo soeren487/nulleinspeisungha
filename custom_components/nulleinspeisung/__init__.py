@@ -3,15 +3,45 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-type NulleinspeisungConfigEntry = ConfigEntry[None]
+from .const import CONF_PASSWORD, CONF_URL, SUBENTRY_TYPE_DTU
+from .coordinator import DtuCoordinator
+from .devices import DeviceSynchroniser
+from .dtu_client import DtuClient
+
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+
+type NulleinspeisungConfigEntry = ConfigEntry[dict[str, DtuCoordinator]]
+"""Runtime data: the coordinator of every DTU, keyed by subentry id."""
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: NulleinspeisungConfigEntry
 ) -> bool:
     """Set up Nulleinspeisung from a config entry."""
+    session = async_get_clientsession(hass)
+    coordinators: dict[str, DtuCoordinator] = {}
+    for subentry_id, subentry in entry.subentries.items():
+        if subentry.subentry_type != SUBENTRY_TYPE_DTU:
+            continue
+        client = DtuClient(
+            session, subentry.data[CONF_URL], subentry.data[CONF_PASSWORD]
+        )
+        coordinator = DtuCoordinator(hass, entry, subentry, client)
+        # A DTU that does not answer must not block the others: refresh without
+        # raising, and let the listeners do their work on the first success.
+        await coordinator.async_refresh()
+        synchroniser = DeviceSynchroniser(hass, entry, coordinator)
+        synchroniser()
+        entry.async_on_unload(coordinator.async_add_listener(synchroniser))
+        coordinators[subentry_id] = coordinator
+    entry.runtime_data = coordinators
+
+    entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
@@ -19,4 +49,11 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: NulleinspeisungConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    return True
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_reload_on_change(
+    hass: HomeAssistant, entry: NulleinspeisungConfigEntry
+) -> None:
+    """Reload when a DTU is added, changed or removed."""
+    hass.config_entries.async_schedule_reload(entry.entry_id)
