@@ -223,3 +223,37 @@ def test_backoff_holds_when_every_restart_is_followed_by_looking_fresh() -> None
             break
     assert gaps == [3, 3, 3, 6, 12, 24, 48]
     assert policy.evaluate(now, stuck=True).not_helping
+
+
+def test_other_dtu_producing_makes_stale_dtu_stuck_at_any_sun_angle() -> None:
+    """Below the sun angle, silence is wrong when a neighbour DTU produces."""
+    assert is_stuck([stale()], -10, SETTINGS, other_dtu_producing=True)
+    assert is_stuck([stale()], 5, SETTINGS, other_dtu_producing=True)
+
+
+def test_below_sun_angle_without_other_dtu_producing_is_not_stuck() -> None:
+    """Without a producing neighbour, night silence stays normal."""
+    assert not is_stuck([stale()], -10, SETTINGS, other_dtu_producing=False)
+    assert not is_stuck([stale()], -10, SETTINGS)
+
+
+def test_fresh_pv_inverter_beats_other_dtu_producing() -> None:
+    """A DTU that delivers data is alive whatever the neighbour does."""
+    assert not is_stuck([stale(), fresh()], -10, SETTINGS, other_dtu_producing=True)
+    assert not is_stuck([stale(), fresh()], 30, SETTINGS, other_dtu_producing=True)
+
+
+def test_only_battery_backed_inverters_never_stuck() -> None:
+    """Without a PV Inverter the DTU is not stuck, whatever the other rules say."""
+    battery = InverterObservation(data_age=5000, is_pv=False)
+    assert not is_stuck([battery], -10, SETTINGS, other_dtu_producing=True)
+    assert not is_stuck([battery], 30, SETTINGS, other_dtu_producing=True)
+
+
+def test_mixed_inverters_judged_by_pv_only_for_second_rule() -> None:
+    """A fresh Battery-backed Inverter does not vouch for stale PV Inverters."""
+    battery_fresh = InverterObservation(data_age=2, is_pv=False)
+    assert is_stuck([battery_fresh, stale()], -10, SETTINGS, other_dtu_producing=True)
+    assert not is_stuck(
+        [battery_fresh, stale()], -10, SETTINGS, other_dtu_producing=False
+    )

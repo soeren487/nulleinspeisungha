@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DOMAIN, DTU_UPDATE_INTERVAL
 from .dtu_client import DtuClient, DtuConnectionError
 from .dtu_models import DtuSnapshot
+from .house_knowledge import HouseKnowledge
 from .supervisor import DtuSupervisor
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
         entry: ConfigEntry,
         subentry: ConfigSubentry,
         client: DtuClient,
+        knowledge: HouseKnowledge | None = None,
     ) -> None:
         """Create the coordinator for the DTU described by ``subentry``."""
         super().__init__(
@@ -36,7 +38,12 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
         )
         self.subentry = subentry
         self.client = client
-        self.supervisor = DtuSupervisor(hass, entry, subentry, client)
+        self.supervisor = DtuSupervisor(hass, entry, subentry, client, knowledge)
+
+    @property
+    def staleness_time(self) -> float:
+        """Seconds after which Inverter data of this DTU counts as stale."""
+        return self.supervisor.staleness_time
 
     @property
     def dtu_serial(self) -> str:

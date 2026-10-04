@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-04
+* **Update**: [Requirements decisions](project/requirements-decisions.md): the cross-DTU stuck rule now requires a PV inverter producing at least 50 W; [Overview](project/overview.md): ticket 05 done.
 * **Update**: [Overview](project/overview.md): tickets 01 to 04 done.
 * **Update**: [Installation inventory](project/installation-inventory.md): measured a DTU restart through the API on the real Büro DTU.
 * **Update**: [Development workflow](project/development-workflow.md): Sonnet now writes the tests, Haiku only runs them.
