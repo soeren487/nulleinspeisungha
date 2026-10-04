@@ -32,6 +32,7 @@ from .entity import (
     setup_inverter_entities,
 )
 from .house import House
+from .price_source import PriceLevel
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -153,6 +154,15 @@ async def async_setup_entry(
             *(HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS),
             ControlStateSensor(house),
             InverterLimitSensor(house),
+            *(
+                [
+                    PriceSensor(house),
+                    PriceLevelSensor(house),
+                    PricesKnownUntilSensor(house),
+                ]
+                if house.prices is not None
+                else []
+            ),
         ],
     )
 
@@ -315,3 +325,72 @@ class InverterLimitSensor(_ControlSensor):
         """Percent asked of the group; unknown while Curtailment is off."""
         control = self.house.control
         return control.requested_percent if control.curtailment else None
+
+
+class _PriceSensor(HouseEntity, SensorEntity):
+    """A sensor that follows the House's stored Tibber prices."""
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the prices or the current price change."""
+        await super().async_added_to_hass()
+        assert self.house.prices is not None
+        self.async_on_remove(self.house.prices.async_add_listener(self._handle_change))
+
+
+class PriceSensor(_PriceSensor):
+    """The price per kWh valid right now."""
+
+    _attr_translation_key = "price"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "price")
+
+    @property
+    def native_value(self) -> float | None:
+        """Total price per kWh, unknown while no price covers the instant."""
+        prices = self.house.prices
+        return prices.current.total if prices and prices.current else None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Currency per kWh."""
+        currency = self.house.prices.currency if self.house.prices else None
+        return f"{currency}/kWh" if currency else None
+
+
+class PriceLevelSensor(_PriceSensor):
+    """Tibber's Price Level of the quarter-hour now."""
+
+    _attr_translation_key = "price_level"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = tuple(level.value for level in PriceLevel)  # type: ignore[assignment]
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "price_level")
+
+    @property
+    def native_value(self) -> str | None:
+        """The Price Level, unknown while no price covers the instant."""
+        prices = self.house.prices
+        return prices.current.level.value if prices and prices.current else None
+
+
+class PricesKnownUntilSensor(_PriceSensor):
+    """The end of the last known price slot."""
+
+    _attr_translation_key = "prices_known_until"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "prices_known_until")
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Where the known prices end."""
+        return self.house.prices.known_until if self.house.prices else None

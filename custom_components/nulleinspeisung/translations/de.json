@@ -76,13 +76,15 @@
             "name": "Name",
             "location": "Standort",
             "grid_meter": "Netzzähler",
-            "grid_meter_sign": "Vorzeichen des Netzzählers"
+            "grid_meter_sign": "Vorzeichen des Netzzählers",
+            "tibber_home": "Tibber-Zuhause"
           },
           "data_description": {
             "name": "Name des Hauses, eindeutig unter den Häusern",
             "location": "Wo das Haus steht",
             "grid_meter": "Leistungssensor, der die Netto-Leistung am Netzanschluss misst",
-            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet"
+            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet",
+            "tibber_home": "Das Tibber-Zuhause, dessen Preise dieses Haus verwendet. Jedes Tibber-Zuhause kann zu einem Haus gehören."
           }
         },
         "reconfigure": {
@@ -92,13 +94,15 @@
             "name": "Name",
             "location": "Standort",
             "grid_meter": "Netzzähler",
-            "grid_meter_sign": "Vorzeichen des Netzzählers"
+            "grid_meter_sign": "Vorzeichen des Netzzählers",
+            "tibber_home": "Tibber-Zuhause"
           },
           "data_description": {
             "name": "Name des Hauses, eindeutig unter den Häusern",
             "location": "Wo das Haus steht",
             "grid_meter": "Leistungssensor, der die Netto-Leistung am Netzanschluss misst",
-            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet"
+            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet",
+            "tibber_home": "Das Tibber-Zuhause, dessen Preise dieses Haus verwendet. Jedes Tibber-Zuhause kann zu einem Haus gehören."
           }
         },
         "inverters": {
@@ -125,7 +129,8 @@
       "error": {
         "name_exists": "Ein Haus mit diesem Namen gibt es bereits.",
         "name_required": "Gib einen Namen ein.",
-        "inverter_assigned": "Ein gewählter Wechselrichter gehört bereits zu einem anderen Haus."
+        "inverter_assigned": "Ein gewählter Wechselrichter gehört bereits zu einem anderen Haus.",
+        "tibber_home_assigned": "Dieses Tibber-Zuhause gehört bereits zu einem anderen Haus."
       },
       "abort": {
         "reconfigure_successful": "Das Haus wurde aktualisiert."
@@ -191,6 +196,22 @@
       },
       "inverter_limit": {
         "name": "Wechselrichter-Limit"
+      },
+      "price": {
+        "name": "Preis"
+      },
+      "price_level": {
+        "name": "Preisniveau",
+        "state": {
+          "very_cheap": "Sehr günstig",
+          "cheap": "Günstig",
+          "normal": "Normal",
+          "expensive": "Teuer",
+          "very_expensive": "Sehr teuer"
+        }
+      },
+      "prices_known_until": {
+        "name": "Preise bekannt bis"
       }
     },
     "button": {
@@ -224,15 +245,21 @@
   "options": {
     "step": {
       "init": {
-        "title": "Benachrichtigungen",
-        "description": "Wähle, wohin Reparaturhinweise zusätzlich gesendet werden. Leer lassen, um sie nur in Home Assistant zu sehen.",
+        "title": "Benachrichtigungen und Tibber",
+        "description": "Wähle, wohin Reparaturhinweise zusätzlich gesendet werden, und gib dein Tibber-Token ein, um Strompreise abzurufen. Leere Felder bleiben ungenutzt.",
         "data": {
-          "notify_target": "Benachrichtigungsziel"
+          "notify_target": "Benachrichtigungsziel",
+          "tibber_token": "Tibber-Token"
         },
         "data_description": {
-          "notify_target": "Eine Notify-Entität, die eine Nachricht erhält, wenn ein Reparaturhinweis entsteht"
+          "notify_target": "Eine Notify-Entität, die eine Nachricht erhält, wenn ein Reparaturhinweis entsteht",
+          "tibber_token": "Persönliches Zugriffstoken von developer.tibber.com; es gilt für alle Zuhause deines Tibber-Kontos"
         }
       }
+    },
+    "error": {
+      "invalid_token": "Tibber hat das Token abgelehnt.",
+      "cannot_connect": "Keine Verbindung zu Tibber."
     }
   },
   "issues": {
@@ -243,6 +270,14 @@
     "restart_not_helping": {
       "title": "Neustart der DTU {dtu} hilft nicht",
       "description": "Die DTU {dtu} liefert nach mehreren Neustarts weiterhin keine Daten ihrer Wechselrichter. Sie wird jetzt seltener neu gestartet. Prüfe Schnee, eine Funkstörung oder einen Hardwaredefekt."
+    },
+    "prices_unavailable": {
+      "title": "Preise nicht verfügbar für {house}",
+      "description": "Für {house} liegt seit mehr als 15 Minuten kein Strompreis vor. Prüfe die Verbindung zu Tibber und das Token. Die Preise werden automatisch erneut abgerufen."
+    },
+    "tibber_token_rejected": {
+      "title": "Tibber-Token abgelehnt",
+      "description": "Tibber hat das Token abgelehnt, daher können keine Preise abgerufen werden. Gib in den Optionen der Integration ein gültiges Token ein."
     }
   },
   "selector": {
@@ -250,6 +285,11 @@
       "options": {
         "import": "Positive Werte sind Bezug",
         "export": "Positive Werte sind Einspeisung"
+      }
+    },
+    "tibber_home": {
+      "options": {
+        "none": "Keines"
       }
     }
   }

@@ -76,13 +76,15 @@
             "name": "Name",
             "location": "Location",
             "grid_meter": "Grid Meter",
-            "grid_meter_sign": "Grid Meter sign"
+            "grid_meter_sign": "Grid Meter sign",
+            "tibber_home": "Tibber home"
           },
           "data_description": {
             "name": "Name of the House, unique among Houses",
             "location": "Where the House is",
             "grid_meter": "Power sensor measuring the net power at the grid connection",
-            "grid_meter_sign": "Whether the sensor reports import or export as positive values"
+            "grid_meter_sign": "Whether the sensor reports import or export as positive values",
+            "tibber_home": "The Tibber home whose prices this House uses. Each Tibber home can belong to one House."
           }
         },
         "reconfigure": {
@@ -92,13 +94,15 @@
             "name": "Name",
             "location": "Location",
             "grid_meter": "Grid Meter",
-            "grid_meter_sign": "Grid Meter sign"
+            "grid_meter_sign": "Grid Meter sign",
+            "tibber_home": "Tibber home"
           },
           "data_description": {
             "name": "Name of the House, unique among Houses",
             "location": "Where the House is",
             "grid_meter": "Power sensor measuring the net power at the grid connection",
-            "grid_meter_sign": "Whether the sensor reports import or export as positive values"
+            "grid_meter_sign": "Whether the sensor reports import or export as positive values",
+            "tibber_home": "The Tibber home whose prices this House uses. Each Tibber home can belong to one House."
           }
         },
         "inverters": {
@@ -125,7 +129,8 @@
       "error": {
         "name_exists": "A House with this name already exists.",
         "name_required": "Enter a name.",
-        "inverter_assigned": "An Inverter you chose already belongs to another House."
+        "inverter_assigned": "An Inverter you chose already belongs to another House.",
+        "tibber_home_assigned": "This Tibber home already belongs to another House."
       },
       "abort": {
         "reconfigure_successful": "The House was updated."
@@ -191,6 +196,22 @@
       },
       "inverter_limit": {
         "name": "Inverter Limit"
+      },
+      "price": {
+        "name": "Price"
+      },
+      "price_level": {
+        "name": "Price Level",
+        "state": {
+          "very_cheap": "Very cheap",
+          "cheap": "Cheap",
+          "normal": "Normal",
+          "expensive": "Expensive",
+          "very_expensive": "Very expensive"
+        }
+      },
+      "prices_known_until": {
+        "name": "Prices known until"
       }
     },
     "button": {
@@ -224,15 +245,21 @@
   "options": {
     "step": {
       "init": {
-        "title": "Notifications",
-        "description": "Choose where repair issues are also sent. Leave empty to see them in Home Assistant only.",
+        "title": "Notifications and Tibber",
+        "description": "Choose where repair issues are also sent, and enter your Tibber token to fetch electricity prices. Leave a field empty to go without.",
         "data": {
-          "notify_target": "Notification target"
+          "notify_target": "Notification target",
+          "tibber_token": "Tibber token"
         },
         "data_description": {
-          "notify_target": "A notify entity that receives a message when a repair issue is raised"
+          "notify_target": "A notify entity that receives a message when a repair issue is raised",
+          "tibber_token": "Personal access token from developer.tibber.com; it covers all homes of your Tibber account"
         }
       }
+    },
+    "error": {
+      "invalid_token": "Tibber rejected the token.",
+      "cannot_connect": "Cannot connect to Tibber."
     }
   },
   "issues": {
@@ -243,6 +270,14 @@
     "restart_not_helping": {
       "title": "Restarting DTU {dtu} does not help",
       "description": "The DTU {dtu} still delivers no data from its Inverters after several restarts. It is restarted less often now. Check for snow, a radio fault or a hardware problem."
+    },
+    "prices_unavailable": {
+      "title": "Prices unavailable for {house}",
+      "description": "There has been no electricity price for {house} for more than 15 minutes. Check the Tibber connection and the token. Prices are fetched again automatically."
+    },
+    "tibber_token_rejected": {
+      "title": "Tibber token rejected",
+      "description": "Tibber refused the token, so no prices can be fetched. Enter a valid token in the options of the integration."
     }
   },
   "selector": {
@@ -250,6 +285,11 @@
       "options": {
         "import": "Positive values are import",
         "export": "Positive values are export"
+      }
+    },
+    "tibber_home": {
+      "options": {
+        "none": "None"
       }
     }
   }

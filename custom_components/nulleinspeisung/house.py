@@ -22,6 +22,7 @@ from .const import (
     CONF_INVERTERS,
     CONF_LATITUDE,
     CONF_LONGITUDE,
+    CONF_TIBBER_HOME,
     DOMAIN,
     SIGN_EXPORT,
     SIGN_IMPORT,
@@ -30,6 +31,7 @@ from .const import (
 from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
 from .house_control import HouseControl
+from .house_prices import HousePrices
 
 _WATTS_PER_UNIT = {"W": 1.0, "kW": 1000.0, "MW": 1_000_000.0, "mW": 0.001}
 
@@ -60,6 +62,7 @@ class HouseConfig:
     grid_meter_sign: str
     inverters: tuple[str, ...]
     battery_backed: tuple[str, ...]
+    tibber_home: str | None = None
 
     @classmethod
     def from_subentry(cls, subentry: ConfigSubentry) -> HouseConfig:
@@ -78,6 +81,7 @@ class HouseConfig:
             battery_backed=tuple(
                 s for s in data.get(CONF_BATTERY_BACKED, ()) if s in inverters
             ),
+            tibber_home=data.get(CONF_TIBBER_HOME) or None,
         )
 
     @property
@@ -122,11 +126,17 @@ class House:
         hass: HomeAssistant,
         config: HouseConfig,
         dtus: Mapping[str, DtuSource],
+        prices: HousePrices | None = None,
     ) -> None:
         """Create the House on top of the coordinators of the entry's DTUs."""
         self.hass = hass
         self.config = config
         self.dtus = dtus
+        self.prices = prices
+        """The House's Tibber prices; ``None`` without a Tibber home and token.
+
+        Later features read ``prices.current`` and ``prices.future`` from here.
+        """
         self.control = HouseControl(self)
 
     @property

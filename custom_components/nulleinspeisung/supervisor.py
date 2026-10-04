@@ -7,20 +7,17 @@ from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 
 from . import solar
+from .alerts import raise_alert, resolve_alert
 from .const import (
-    CONF_NOTIFY_TARGET,
     CONF_RESTART_WAIT,
     CONF_STALENESS_TIME,
     CONF_SUN_ANGLE,
     DEFAULT_RESTART_WAIT,
     DEFAULT_STALENESS_TIME,
     DEFAULT_SUN_ANGLE,
-    DOMAIN,
 )
 from .dtu_client import DtuAuthError, DtuClient, DtuConnectionError
 from .dtu_health import (
@@ -145,41 +142,15 @@ class DtuSupervisor:
         return f"{kind}_{self._subentry.unique_id}"
 
     def _resolve(self, kind: str) -> None:
-        ir.async_delete_issue(self._hass, DOMAIN, self._issue_id(kind))
+        resolve_alert(self._hass, self._issue_id(kind))
 
     def _raise(self, kind: str) -> None:
         """Raise a repair issue, and tell the notification target once."""
-        issue_id = self._issue_id(kind)
-        if ir.async_get(self._hass).async_get_issue(DOMAIN, issue_id) is not None:
-            return
-        ir.async_create_issue(
+        raise_alert(
             self._hass,
-            DOMAIN,
-            issue_id,
-            is_fixable=False,
-            severity=ir.IssueSeverity.ERROR,
-            translation_key=kind,
-            translation_placeholders={"dtu": self._subentry.title},
+            self._entry,
+            self._issue_id(kind),
+            kind,
+            {"dtu": self._subentry.title},
+            ENGLISH_TITLES[kind],
         )
-        target = self._entry.options.get(CONF_NOTIFY_TARGET)
-        if target:
-            self._hass.async_create_task(self._async_notify(target, kind))
-
-    async def _async_notify(self, target: str, kind: str) -> None:
-        """Send the translated title of an issue to the notification target."""
-        title = f"component.{DOMAIN}.issues.{kind}.title"
-        translations = await async_get_translations(
-            self._hass, self._hass.config.language, "issues", [DOMAIN]
-        )
-        text = translations.get(title, ENGLISH_TITLES[kind]).format(
-            dtu=self._subentry.title
-        )
-        try:
-            await self._hass.services.async_call(
-                "notify",
-                "send_message",
-                {"entity_id": target, "message": text},
-                blocking=True,
-            )
-        except Exception:
-            _LOGGER.exception("Sending the notification failed")

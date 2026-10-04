@@ -87,3 +87,19 @@ def test_german_translation_differs_from_english() -> None:
 
     different = [en for en, de in zip(en_values, de_values, strict=False) if en != de]
     assert different, "German translation is identical to English"
+
+
+def test_price_level_states_are_translated_into_real_german() -> None:
+    """Price Level is 'Preisniveau' and its five states are German words."""
+    base_path = Path(__file__).parent.parent / "custom_components/nulleinspeisung"
+    with open(base_path / "translations/de.json") as f:
+        de_data = json.load(f)
+    level = de_data["entity"]["sensor"]["price_level"]
+    assert level["name"] == "Preisniveau"
+    assert level["state"] == {
+        "very_cheap": "Sehr günstig",
+        "cheap": "Günstig",
+        "normal": "Normal",
+        "expensive": "Teuer",
+        "very_expensive": "Sehr teuer",
+    }
