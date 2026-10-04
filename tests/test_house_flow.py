@@ -102,14 +102,16 @@ async def _create(
     result = await _next(hass, result, {"inverters": inverters})
     if inverters:
         result = await _next(hass, result, {"battery_backed": battery_backed})
+    assert result["step_id"] == "ac_battery"
+    result = await _next(hass, result, {})
     await hass.async_block_till_done()
     return result
 
 
-async def test_create_house_through_three_steps(
+async def test_create_house_through_four_steps(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
-    """The three steps store the House and the owner can see it listed."""
+    """The four steps store the House and the owner can see it listed."""
     entry = await setup_entry(hass, dtu_network, SimDtu.default())
     result = await _start(hass, entry)
     assert result["step_id"] == "user"
@@ -125,6 +127,9 @@ async def test_create_house_through_three_steps(
     assert result["step_id"] == "battery_backed"
     assert sorted(_offered(result, "battery_backed")) == sorted([OMA, BUERO4])
     result = await _next(hass, result, {"battery_backed": [BUERO4]})
+    assert result["step_id"] == "ac_battery"
+    assert _defaults(result)["gx_port"] == 1883
+    result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Home"
     await hass.async_block_till_done()
@@ -158,10 +163,10 @@ async def test_duplicate_name_refused(
     assert result["step_id"] == "inverters"
 
 
-async def test_house_without_inverters_skips_battery_step(
+async def test_house_without_inverters_skips_battery_backed_step(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
-    """Choosing no Inverter creates the House straight away."""
+    """Choosing no Inverter skips the Battery-backed step."""
     entry = await setup_entry(hass, dtu_network, SimDtu.default())
     result = await _create(hass, entry, "Empty", [], [])
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -199,7 +204,8 @@ async def test_inverter_taken_meanwhile_is_refused(
     second = await _next(hass, second, _first("B"))
 
     first = await _next(hass, first, {"inverters": [OMA]})
-    await _next(hass, first, {"battery_backed": []})
+    first = await _next(hass, first, {"battery_backed": []})
+    await _next(hass, first, {})
     await hass.async_block_till_done()
 
     result = await _next(hass, second, {"inverters": [OMA]})
@@ -220,6 +226,7 @@ async def test_inverters_of_two_dtus_in_one_house(
     assert _labels(result)[GARAGE_1] == "Garage 1 (OpenDTU-Garage, HM-600-4T)"
     result = await _next(hass, result, {"inverters": [OMA, GARAGE_1]})
     result = await _next(hass, result, {"battery_backed": [GARAGE_1]})
+    result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     data = _house(entry, "Home").data
@@ -263,6 +270,7 @@ async def test_reconfigure_changes_everything(
     defaults = _defaults(result)
     assert defaults["battery_backed"] == [BUERO4]
     result = await _next(hass, result, {"battery_backed": [GARAGE_2]})
+    result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     await hass.async_block_till_done()
@@ -300,7 +308,8 @@ async def test_unknown_assigned_inverter_stays_assigned(
     defaults = _defaults(result)
     assert defaults["inverters"] == [OMA, "999000111222"]
     result = await _next(hass, result, {"inverters": defaults["inverters"]})
-    await _next(hass, result, {"battery_backed": []})
+    result = await _next(hass, result, {"battery_backed": []})
+    await _next(hass, result, {})
     await hass.async_block_till_done()
     assert list(_house(entry, "Home").data["inverters"]) == [OMA, "999000111222"]
 
@@ -325,6 +334,7 @@ async def test_inverters_of_a_down_dtu_are_still_offered(
     assert labels[OMA] == "OmaOpa (OpenDTU-Buero, HM-600-4T)"
     result = await _next(hass, result, {"inverters": [OMA]})
     result = await _next(hass, result, {"battery_backed": []})
+    result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
     assert list(_house(entry, "Home").data["inverters"]) == [OMA]

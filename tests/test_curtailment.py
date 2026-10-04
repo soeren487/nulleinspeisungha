@@ -19,9 +19,19 @@ def _inv(
 
 
 def _decide(grid: float, *inverters: ControllableInverter, **kwargs: float):
-    settings = {"setpoint": 0.0, "band": 30.0, "floor": 5.0} | kwargs
+    settings = {
+        "setpoint": 0.0,
+        "band": 30.0,
+        "floor": 5.0,
+        "battery_headroom": 0.0,
+    } | kwargs
     return decide(
-        grid, settings["setpoint"], settings["band"], settings["floor"], inverters
+        grid,
+        settings["setpoint"],
+        settings["band"],
+        settings["floor"],
+        inverters,
+        settings["battery_headroom"],
     )
 
 
@@ -197,3 +207,50 @@ def test_split_never_exceeds_100() -> None:
 def test_split_of_nothing() -> None:
     """No Inverters, no limits."""
     assert split_equally(100, {}, 5) == {}
+
+
+def test_headroom_raises_the_allowance_inside_the_band() -> None:
+    """At the target, a battery that could take 500 W lets Inverters produce more."""
+    decision = _decide(0.0, _inv(production=400, limit=40), battery_headroom=500.0)
+    assert decision.state is ControlState.RAISING
+    assert decision.allowed_power == pytest.approx(900)
+
+
+def test_headroom_is_added_to_a_deficit() -> None:
+    """Importing 100 W and a headroom of 300 W raises by 400 W."""
+    decision = _decide(100.0, _inv(production=400, limit=40), battery_headroom=300.0)
+    assert decision.allowed_power == pytest.approx(800)
+
+
+def test_headroom_within_the_band_holds() -> None:
+    """A headroom smaller than the band is not worth a change."""
+    decision = _decide(0.0, _inv(production=400, limit=40), battery_headroom=20.0)
+    assert decision.state is ControlState.HOLDING
+    assert decision.allowed_power == pytest.approx(400)
+
+
+def test_headroom_is_capped_by_the_rated_power() -> None:
+    """The allowance never exceeds what the Inverters are rated for."""
+    decision = _decide(0.0, _inv(production=900, limit=90), battery_headroom=5000.0)
+    assert decision.allowed_power == pytest.approx(1000)
+
+
+def test_headroom_is_ignored_when_exporting_beyond_the_band() -> None:
+    """The battery evidently does not absorb the surplus: lower as without it."""
+    decision = _decide(-200.0, _inv(production=1000), battery_headroom=800.0)
+    assert decision.state is ControlState.LOWERING
+    assert decision.allowed_power == pytest.approx(800)
+
+
+def test_headroom_counts_at_the_edge_of_the_band() -> None:
+    """Export exactly at the edge of the band is not beyond it."""
+    decision = _decide(-30.0, _inv(production=500, limit=50), battery_headroom=200.0)
+    assert decision.state is ControlState.RAISING
+    assert decision.allowed_power == pytest.approx(670)
+
+
+def test_no_headroom_behaves_as_before() -> None:
+    """The default headroom of zero changes nothing."""
+    for grid in (-200.0, -10.0, 0.0, 150.0):
+        inverter = _inv(production=400, limit=40)
+        assert _decide(grid, inverter) == _decide(grid, inverter, battery_headroom=0.0)

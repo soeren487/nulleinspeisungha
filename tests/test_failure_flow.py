@@ -198,10 +198,14 @@ async def test_one_dtu_down_keeps_control_running_on_the_other(
     assert len(dtu_network.limits(one.serial)) == 2
     two.down = True
     dtu_network.apply()
+    # Let the DTUs poll once, so the House knows that the second one is down.
+    # The poll (every 10 s) and the control run (every 15 s) fall due together
+    # after 30 s, in an order that varies; only the poll is due after 10 s.
+    await _tick(hass, freezer, 10)
     dtu_network.clear_limits()
     for _ in range(5):
         _grid(hass, -2000)
-        await _tick(hass, freezer)
+        await _tick(hass, freezer, 15)
         assert _state(hass, "sensor", "control_state") == "lowering"
     assert _issue(hass, DTU_ISSUE) is None
     assert sorted(s for s, _, _ in dtu_network.limits(one.serial)) == [OMA, BUERO4]

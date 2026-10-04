@@ -180,9 +180,11 @@ def _house(entry: ConfigEntry, name: str) -> ConfigSubentry:
 
 
 async def _finish(hass: HomeAssistant, result: ConfigFlowResult) -> ConfigFlowResult:
-    """Pass the Inverter step of a House without Inverters."""
+    """Pass the Inverter and AC Battery steps of a House without either."""
     assert result["step_id"] == "inverters"
     result = await _next(hass, result, {"inverters": []})
+    assert result["step_id"] == "ac_battery"
+    result = await _next(hass, result, {})
     await hass.async_block_till_done()
     return result
 

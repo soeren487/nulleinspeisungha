@@ -52,6 +52,7 @@ def decide(
     tolerance_band: float,
     floor_percent: float,
     inverters: Sequence[ControllableInverter],
+    battery_headroom: float = 0.0,
 ) -> Decision:
     """Decide the allowed production of one group of Inverters.
 
@@ -59,12 +60,18 @@ def decide(
     it the allowance moves by the deviation from the target, starting from
     the sum over the Inverters of the smaller of allowance and production when
     lowering, and from the allowance when raising.
+
+    ``battery_headroom`` is the charge power the AC Battery could still take.
+    It raises the allowance, unless the House exports beyond the band: then
+    the battery evidently does not absorb the surplus and it is ignored.
     """
     if not inverters:
         return Decision(ControlState.NO_INVERTER, None)
     rated = sum(i.rated_power for i in inverters)
     allowed = sum(i.limit / 100 * i.rated_power for i in inverters)
     deviation = grid_power - (-feed_in_setpoint)
+    if deviation >= -tolerance_band:
+        deviation += battery_headroom
     if abs(deviation) <= tolerance_band:
         return Decision(ControlState.HOLDING, allowed)
     if deviation < 0:

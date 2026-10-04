@@ -21,6 +21,7 @@ from .house import House
 from .house_control import (
     DEFAULT_FEED_IN_SETPOINT,
     DEFAULT_LIMIT_FLOOR,
+    DEFAULT_MAXIMUM_CHARGE_POWER,
     DEFAULT_TOLERANCE_BAND,
     DEFAULT_UPDATE_INTERVAL,
     HouseControl,
@@ -34,6 +35,8 @@ class HouseNumberDescription(NumberEntityDescription):
     default: float
     getter: Callable[[HouseControl], float]
     setter: Callable[[HouseControl, float], None]
+    battery_only: bool = False
+    """Only for Houses with an AC Battery."""
 
 
 def _set_attr(name: str) -> Callable[[HouseControl, float], None]:
@@ -94,6 +97,20 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
         getter=lambda control: control.limit_floor,
         setter=_set_attr("limit_floor"),
     ),
+    HouseNumberDescription(
+        key="maximum_charge_power",
+        translation_key="maximum_charge_power",
+        device_class=NumberDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        native_min_value=100,
+        native_max_value=20000,
+        native_step=50,
+        mode=NumberMode.BOX,
+        default=DEFAULT_MAXIMUM_CHARGE_POWER,
+        battery_only=True,
+        getter=lambda control: control.maximum_charge_power,
+        setter=lambda control, value: control.set_maximum_charge_power(value),
+    ),
 )
 
 
@@ -106,7 +123,11 @@ async def async_setup_entry(
     setup_house_entities(
         entry,
         async_add_entities,
-        lambda house: [HouseNumber(house, d) for d in DESCRIPTIONS],
+        lambda house: [
+            HouseNumber(house, d)
+            for d in DESCRIPTIONS
+            if house.gateway is not None or not d.battery_only
+        ],
     )
 
 

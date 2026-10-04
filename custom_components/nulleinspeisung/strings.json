@@ -124,13 +124,29 @@
           "data_description": {
             "battery_backed": "Inverters whose input is a DC Battery"
           }
+        },
+        "ac_battery": {
+          "title": "AC Battery",
+          "description": "If the House has an AC Battery, enter the address of its Victron GX. Leave the address empty if it has none. The GX must allow MQTT without a password on the port.",
+          "data": {
+            "gx_host": "GX address",
+            "gx_port": "MQTT port",
+            "battery_capacity": "Usable capacity"
+          },
+          "data_description": {
+            "gx_host": "Host name or IP address of the GX",
+            "gx_port": "Port of the GX's MQTT broker",
+            "battery_capacity": "Usable capacity of the AC Battery in kWh"
+          }
         }
       },
       "error": {
         "name_exists": "A House with this name already exists.",
         "name_required": "Enter a name.",
         "inverter_assigned": "An Inverter you chose already belongs to another House.",
-        "tibber_home_assigned": "This Tibber home already belongs to another House."
+        "tibber_home_assigned": "This Tibber home already belongs to another House.",
+        "cannot_connect": "The GX does not answer on this address and port.",
+        "gx_assigned": "This GX already belongs to another House."
       },
       "abort": {
         "reconfigure_successful": "The House was updated."
@@ -150,6 +166,9 @@
       },
       "pv_forecast_usable": {
         "name": "PV Forecast usable"
+      },
+      "battery_connected": {
+        "name": "AC Battery connected"
       }
     },
     "sensor": {
@@ -228,6 +247,18 @@
       },
       "pv_forecast_history_days": {
         "name": "PV Forecast history days"
+      },
+      "battery_soc": {
+        "name": "AC Battery charge level"
+      },
+      "battery_power": {
+        "name": "AC Battery power"
+      },
+      "battery_headroom": {
+        "name": "AC Battery headroom"
+      },
+      "consumption": {
+        "name": "Consumption"
       }
     },
     "button": {
@@ -255,6 +286,9 @@
       },
       "limit_floor": {
         "name": "Limit floor"
+      },
+      "maximum_charge_power": {
+        "name": "Maximum Charge Power"
       }
     },
     "select": {
@@ -315,6 +349,18 @@
     "pv_forecast_unavailable": {
       "title": "PV forecast for House {house} unavailable",
       "description": "The irradiance forecast for {house} could not be fetched for more than 6 hours, so the PV Forecast is getting out of date. Check the internet connection of Home Assistant. The forecast is fetched again automatically."
+    },
+    "battery_not_answering": {
+      "title": "AC Battery of House {house} does not answer",
+      "description": "The GX of the AC Battery of {house} has delivered no values for more than two minutes. Curtailment continues without counting on the battery. Check the GX and its network connection. The connection is restored automatically."
+    },
+    "dynamic_ess_active": {
+      "title": "Dynamic ESS is active on the AC Battery of House {house}",
+      "description": "Dynamic ESS is switched on on the GX of {house} and plans the battery by itself, which conflicts with this integration. Switch Dynamic ESS off on the GX."
+    },
+    "feed_in_conflicts_battery_setpoint": {
+      "title": "Feed-in Setpoint of House {house} asks for more import than the AC Battery's grid setpoint",
+      "description": "The negative Feed-in Setpoint of {house} asks for more import than the grid setpoint stored in the AC Battery's GX. The control aims for the battery's grid setpoint instead. Raise the grid setpoint on the GX or the Feed-in Setpoint."
     }
   },
   "selector": {

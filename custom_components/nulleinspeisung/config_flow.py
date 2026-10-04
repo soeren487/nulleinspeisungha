@@ -33,10 +33,15 @@ from homeassistant.helpers.selector import (
     TextSelectorType,
 )
 
+from .battery_gateway import GxConnectionError, async_probe
 from .const import (
     CONF_BATTERY_BACKED,
+    CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GX_HOST,
+    CONF_GX_PORT,
+    CONF_GX_PORTAL_ID,
     CONF_INVERTERS,
     CONF_LATITUDE,
     CONF_LOCATION,
@@ -50,6 +55,7 @@ from .const import (
     CONF_TIBBER_HOME,
     CONF_TIBBER_TOKEN,
     CONF_URL,
+    DEFAULT_GX_PORT,
     DEFAULT_RESTART_WAIT,
     DEFAULT_STALENESS_TIME,
     DEFAULT_SUN_ANGLE,
@@ -306,8 +312,8 @@ NO_TIBBER_HOME = "none"
 class HouseSubentryFlow(ConfigSubentryFlow):
     """Add a House, or change everything about it later.
 
-    Three steps: the House itself, its Inverters, and which of those are
-    Battery-backed (skipped when there are none).
+    Four steps: the House itself, its Inverters, which of those are
+    Battery-backed (skipped when there are none), and the AC Battery.
     """
 
     def __init__(self) -> None:
@@ -503,7 +509,7 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                 self._collected[CONF_INVERTERS] = chosen
                 if not chosen:
                     self._collected[CONF_BATTERY_BACKED] = []
-                    return self._async_finish()
+                    return await self.async_step_ac_battery()
                 return await self.async_step_battery_backed()
         default = (
             user_input[CONF_INVERTERS]
@@ -534,7 +540,7 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             self._collected[CONF_BATTERY_BACKED] = [
                 s for s in chosen if s in user_input[CONF_BATTERY_BACKED]
             ]
-            return self._async_finish()
+            return await self.async_step_ac_battery()
         previous = self._current().get(CONF_BATTERY_BACKED, [])
         return self.async_show_form(
             step_id="battery_backed",
@@ -547,6 +553,80 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                 }
             ),
         )
+
+    async def async_step_ac_battery(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Step four: the GX of the House's AC Battery, if it has one."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host = str(user_input.get(CONF_GX_HOST) or "").strip()
+            if not host:
+                return self._async_finish()
+            port = int(user_input.get(CONF_GX_PORT, DEFAULT_GX_PORT))
+            try:
+                portal_id = await async_probe(host, port)
+            except GxConnectionError:
+                errors[CONF_GX_HOST] = "cannot_connect"
+            else:
+                if portal_id in self._portal_ids_of_other_houses():
+                    errors[CONF_GX_HOST] = "gx_assigned"
+                else:
+                    self._collected[CONF_GX_HOST] = host
+                    self._collected[CONF_GX_PORT] = port
+                    self._collected[CONF_GX_PORTAL_ID] = portal_id
+                    capacity = user_input.get(CONF_BATTERY_CAPACITY)
+                    if capacity is not None:
+                        self._collected[CONF_BATTERY_CAPACITY] = float(capacity)
+                    return self._async_finish()
+        values = user_input or self._current()
+        suggested: dict[Any, Any] = {}
+        for key in (CONF_GX_HOST, CONF_BATTERY_CAPACITY):
+            if values.get(key) is not None:
+                suggested[key] = {"description": {"suggested_value": values[key]}}
+        return self.async_show_form(
+            step_id="ac_battery",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_GX_HOST, **suggested.get(CONF_GX_HOST, {})
+                    ): TextSelector(),
+                    vol.Optional(
+                        CONF_GX_PORT,
+                        default=int(values.get(CONF_GX_PORT, DEFAULT_GX_PORT)),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=1,
+                            max=65535,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                    vol.Optional(
+                        CONF_BATTERY_CAPACITY,
+                        **suggested.get(CONF_BATTERY_CAPACITY, {}),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0.1,
+                            max=1000,
+                            step=0.1,
+                            unit_of_measurement="kWh",
+                            mode=NumberSelectorMode.BOX,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
+    def _portal_ids_of_other_houses(self) -> set[str]:
+        """Portal ids of the GXes used by any House except the one being edited."""
+        return {
+            portal_id
+            for subentry in house_subentries(self._get_entry())
+            if subentry.subentry_id != self._own_id()
+            if (portal_id := subentry.data.get(CONF_GX_PORTAL_ID))
+        }
 
     def _async_finish(self) -> SubentryFlowResult:
         """Store the House."""

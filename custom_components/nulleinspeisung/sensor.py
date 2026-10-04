@@ -91,6 +91,9 @@ class HouseSensorDescription(SensorEntityDescription):
     follows_grid_meter: bool = False
     """Update on the Grid Meter's state changes instead of on DTU updates."""
     always_available: bool = False
+    follows_dtus: bool = False
+    follows_battery: bool = False
+    """Also update when the AC Battery's state changes."""
 
 
 _POWER = {
@@ -126,11 +129,45 @@ HOUSE_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
         **_POWER,
     ),
     HouseSensorDescription(
+        key="consumption",
+        translation_key="consumption",
+        value_fn=lambda house: house.consumption(),
+        follows_grid_meter=True,
+        follows_dtus=True,
+        follows_battery=True,
+        **_POWER,
+    ),
+    HouseSensorDescription(
         key="inverter_count",
         translation_key="inverter_count",
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda house: house.inverter_count,
         always_available=True,
+    ),
+)
+
+
+BATTERY_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
+    HouseSensorDescription(
+        key="battery_soc",
+        translation_key="battery_soc",
+        device_class=SensorDeviceClass.BATTERY,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        value_fn=lambda house: house.battery.charge_level if house.battery else None,
+    ),
+    HouseSensorDescription(
+        key="battery_power",
+        translation_key="battery_power",
+        value_fn=lambda house: house.battery.power if house.battery else None,
+        **_POWER,
+    ),
+    HouseSensorDescription(
+        key="battery_headroom",
+        translation_key="battery_headroom",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda house: house.battery_headroom(),
+        **_POWER,
     ),
 )
 
@@ -161,6 +198,11 @@ async def async_setup_entry(
             *(HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS),
             ControlStateSensor(house),
             InverterLimitSensor(house),
+            *(
+                [BatterySensor(house, d) for d in BATTERY_DESCRIPTIONS]
+                if house.gateway is not None
+                else []
+            ),
             *(
                 [
                     PriceSensor(house),
@@ -284,7 +326,13 @@ class HouseSensor(HouseEntity, SensorEntity):
                     self.hass, [self.house.config.grid_meter], self._handle_change
                 )
             )
-        elif not description.always_available:
+        if description.follows_battery and self.house.gateway is not None:
+            self.async_on_remove(
+                self.house.gateway.async_add_listener(self._handle_change)
+            )
+        if description.follows_dtus or not (
+            description.follows_grid_meter or description.always_available
+        ):
             for coordinator in self.house.dtus.values():
                 self.async_on_remove(
                     coordinator.async_add_listener(self._handle_change)
@@ -299,6 +347,35 @@ class HouseSensor(HouseEntity, SensorEntity):
     def available(self) -> bool:
         """Whether the value is known."""
         return self.entity_description.always_available or self.native_value is not None
+
+
+class BatterySensor(HouseEntity, SensorEntity):
+    """A value read from the House's AC Battery, unavailable while it is silent."""
+
+    entity_description: HouseSensorDescription
+
+    def __init__(self, house: House, description: HouseSensorDescription) -> None:
+        """Create the sensor."""
+        super().__init__(house, description.key)
+        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the battery or the control changes."""
+        await super().async_added_to_hass()
+        assert self.house.gateway is not None
+        self.async_on_remove(self.house.gateway.async_add_listener(self._handle_change))
+        self.async_on_remove(self.house.control.async_add_listener(self._handle_change))
+
+    @property
+    def native_value(self) -> float | None:
+        """The current value."""
+        return self.entity_description.value_fn(self.house)
+
+    @property
+    def available(self) -> bool:
+        """Whether the AC Battery delivers and the value is known."""
+        state = self.house.battery
+        return state is not None and state.fresh and self.native_value is not None
 
 
 class _ControlSensor(HouseEntity, SensorEntity):

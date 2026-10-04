@@ -40,6 +40,13 @@ CONF_GRID_METER = "grid_meter"
 CONF_GRID_METER_SIGN = "grid_meter_sign"
 CONF_INVERTERS = "inverters"
 CONF_BATTERY_BACKED = "battery_backed"
+CONF_GX_HOST = "gx_host"
+CONF_GX_PORT = "gx_port"
+CONF_GX_PORTAL_ID = "gx_portal_id"
+CONF_BATTERY_CAPACITY = "battery_capacity"
+
+DEFAULT_GX_PORT = 1883
+"""Port of the MQTT broker built into a Victron GX."""
 
 SIGN_IMPORT = "import"
 """The Grid Meter reports positive values for import."""
