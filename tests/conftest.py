@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp.client_exceptions import ClientError
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components  # noqa: F401
+from custom_components.nulleinspeisung.const import (
+    CONF_PASSWORD,
+    CONF_URL,
+    DOMAIN,
+    SUBENTRY_TYPE_DTU,
+)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opendtu"
 
@@ -19,6 +29,25 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opendtu"
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Let the test Home Assistant load integrations from custom_components."""
+
+
+class Sun:
+    """The sun's elevation as the integration sees it; tests move it."""
+
+    def __init__(self) -> None:
+        """Start with the sun well below the horizon."""
+        self.elevation = -20.0
+
+
+@pytest.fixture(autouse=True)
+def sun() -> Iterator[Sun]:
+    """Control the sun elevation at the single place the integration reads it."""
+    sun = Sun()
+    with patch(
+        "custom_components.nulleinspeisung.solar.sun_elevation",
+        side_effect=lambda hass: sun.elevation,
+    ):
+        yield sun
 
 
 def load_fixture(filename: str) -> dict[str, Any]:
@@ -55,6 +84,13 @@ class SimDtu:
     firmware: str
     password_ok: bool = True
     down: bool = False
+    reboot_fails: bool = False
+    after_reboot: str | None = None
+    """``"aging"``: every Inverter's data age is the time since the last reboot,
+    as on a real DTU that cannot reach its Inverters. ``"fresh"``: they deliver
+    fresh data. ``None``: the data ages are left as set."""
+    rebooted_at: datetime | None = None
+    reboots_seen: int = 0
     inverters: list[SimInverter] = field(default_factory=list)
 
     @classmethod
@@ -113,6 +149,7 @@ class DtuNetwork:
         """Initialize the network."""
         self.aioclient_mock = aioclient_mock
         self.dtus: dict[str, SimDtu] = {}
+        self._reboot_log: dict[str, list[tuple[Any, Any]]] = {}
 
     def add(self, dtu: SimDtu) -> None:
         """Add a DTU to the network."""
@@ -120,6 +157,7 @@ class DtuNetwork:
 
     def apply(self) -> None:
         """Register all current DTU state with the mock client."""
+        self._keep_reboots()
         self.aioclient_mock.clear_requests()
 
         for dtu in self.dtus.values():
@@ -134,6 +172,9 @@ class DtuNetwork:
                     "/api/dtu/config",
                 ]:
                     self.aioclient_mock.get(f"{base_url}{path}", exc=ClientError())
+                self.aioclient_mock.post(
+                    f"{base_url}/api/maintenance/reboot", exc=ClientError()
+                )
                 for inverter in dtu.inverters:
                     self.aioclient_mock.get(
                         f"{base_url}/api/livedata/status?inv={inverter.serial}",
@@ -155,6 +196,46 @@ class DtuNetwork:
             self._register_limit_status(base_url, dtu)
             self._register_system_status(base_url, dtu)
             self._register_dtu_config(base_url, dtu)
+            self.aioclient_mock.post(
+                f"{base_url}/api/maintenance/reboot",
+                status=500 if dtu.reboot_fails else 200,
+                json={"type": "success", "message": "Reboot triggered!"},
+            )
+
+    def _keep_reboots(self) -> None:
+        """Move the reboot requests seen so far into the log."""
+        for dtu in self.dtus.values():
+            url = f"{dtu.base_url.rstrip('/')}/api/maintenance/reboot"
+            self._reboot_log.setdefault(dtu.serial, []).extend(
+                (call[2], call[3])
+                for call in self.aioclient_mock.mock_calls
+                if call[0] == "POST" and str(call[1]) == url
+            )
+        self.aioclient_mock.mock_calls.clear()
+
+    def reboots(self, serial: str = "199980126212") -> list[tuple[Any, Any]]:
+        """All reboot requests sent to a DTU, as (body, headers)."""
+        self._keep_reboots()
+        return list(self._reboot_log.get(serial, []))
+
+    def simulate(self) -> None:
+        """Let DTUs that were rebooted since the last call age their data."""
+        now = datetime.now(UTC)
+        for dtu in self.dtus.values():
+            seen = len(self.reboots(dtu.serial))
+            if seen > dtu.reboots_seen:
+                dtu.reboots_seen = seen
+                dtu.rebooted_at = now
+            if dtu.after_reboot is None or dtu.rebooted_at is None:
+                continue
+            age = (
+                int((now - dtu.rebooted_at).total_seconds())
+                if dtu.after_reboot == "aging"
+                else 3
+            )
+            for inverter in dtu.inverters:
+                inverter.data_age = age
+        self.apply()
 
     def _register_livedata_status(self, base_url: str, dtu: SimDtu) -> None:
         """Register /api/livedata/status endpoint."""
@@ -245,3 +326,38 @@ class DtuNetwork:
 def dtu_network(aioclient_mock: MagicMock) -> DtuNetwork:
     """Provide a DTU network simulator."""
     return DtuNetwork(aioclient_mock)
+
+
+async def setup_entry(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    *dtus: SimDtu,
+    settings: dict[str, Any] | None = None,
+    options: dict[str, Any] | None = None,
+) -> MockConfigEntry:
+    """Put the DTUs on the simulated network and set up an entry with them."""
+    for dtu in dtus:
+        dtu_network.add(dtu)
+    dtu_network.apply()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options=options or {},
+        subentries_data=[
+            {
+                "data": {
+                    CONF_URL: dtu.base_url,
+                    CONF_PASSWORD: "password",
+                    **(settings or {}),
+                },
+                "unique_id": dtu.serial,
+                "title": dtu.hostname,
+                "subentry_type": SUBENTRY_TYPE_DTU,
+            }
+            for dtu in dtus
+        ],
+    )
+    entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry

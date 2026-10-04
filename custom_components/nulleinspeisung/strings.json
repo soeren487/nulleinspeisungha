@@ -20,11 +20,17 @@
           "description": "Enter the address and the administrator password of the OpenDTU.",
           "data": {
             "url": "Address",
-            "password": "Password"
+            "password": "Password",
+            "sun_angle": "Sun angle",
+            "staleness_time": "Staleness time (seconds)",
+            "restart_wait": "Wait after restart (seconds)"
           },
           "data_description": {
             "url": "Address of the DTU, for example 192.168.1.50 or http://opendtu.local",
-            "password": "Administrator password of the DTU (user admin)"
+            "password": "Administrator password of the DTU (user admin)",
+            "sun_angle": "Sun elevation in degrees above which the Inverters must be delivering data (default 5)",
+            "staleness_time": "Seconds without fresh Inverter data after which the DTU counts as stuck (default 120)",
+            "restart_wait": "Seconds to wait after a restart before judging the DTU again; at least the staleness time plus 30 seconds (default 180)"
           }
         },
         "reconfigure": {
@@ -32,11 +38,17 @@
           "description": "Change the address or the administrator password of this DTU.",
           "data": {
             "url": "Address",
-            "password": "Password"
+            "password": "Password",
+            "sun_angle": "Sun angle",
+            "staleness_time": "Staleness time (seconds)",
+            "restart_wait": "Wait after restart (seconds)"
           },
           "data_description": {
             "url": "Address of the DTU, for example 192.168.1.50 or http://opendtu.local",
-            "password": "Administrator password of the DTU (user admin)"
+            "password": "Administrator password of the DTU (user admin)",
+            "sun_angle": "Sun elevation in degrees above which the Inverters must be delivering data (default 5)",
+            "staleness_time": "Seconds without fresh Inverter data after which the DTU counts as stuck (default 120)",
+            "restart_wait": "Seconds to wait after a restart before judging the DTU again; at least the staleness time plus 30 seconds (default 180)"
           }
         }
       },
@@ -58,6 +70,9 @@
       },
       "producing": {
         "name": "Producing"
+      },
+      "stuck": {
+        "name": "Stuck"
       }
     },
     "sensor": {
@@ -72,7 +87,47 @@
       },
       "rated_power": {
         "name": "Rated power"
+      },
+      "restart_count": {
+        "name": "Restarts"
+      },
+      "last_restart": {
+        "name": "Last restart"
       }
+    },
+    "button": {
+      "restart": {
+        "name": "Restart"
+      }
+    },
+    "switch": {
+      "automatic_restart": {
+        "name": "Automatic restart"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Notifications",
+        "description": "Choose where repair issues are also sent. Leave empty to see them in Home Assistant only.",
+        "data": {
+          "notify_target": "Notification target"
+        },
+        "data_description": {
+          "notify_target": "A notify entity that receives a message when a repair issue is raised"
+        }
+      }
+    }
+  },
+  "issues": {
+    "dtu_unreachable": {
+      "title": "DTU {dtu} unreachable",
+      "description": "The DTU {dtu} does not answer on the network, so it cannot be restarted. Check its power and network connection."
+    },
+    "restart_not_helping": {
+      "title": "Restarting DTU {dtu} does not help",
+      "description": "The DTU {dtu} still delivers no data from its Inverters after several restarts. It is restarted less often now. Check for snow, a radio fault or a hardware problem."
     }
   }
 }

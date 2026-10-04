@@ -12,7 +12,12 @@ from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
 from .dtu_client import DtuClient
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 type NulleinspeisungConfigEntry = ConfigEntry[dict[str, DtuCoordinator]]
 """Runtime data: the coordinator of every DTU, keyed by subentry id."""

@@ -6,18 +6,14 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
     async_fire_time_changed,
 )
 
 from custom_components.nulleinspeisung.const import (
-    CONF_PASSWORD,
-    CONF_URL,
     DOMAIN,
     DTU_UPDATE_INTERVAL,
-    SUBENTRY_TYPE_DTU,
 )
-from tests.conftest import DtuNetwork, SimDtu, SimInverter
+from tests.conftest import DtuNetwork, SimDtu, SimInverter, setup_entry
 
 
 async def test_inverter_devices_created_after_setup(
@@ -25,28 +21,7 @@ async def test_inverter_devices_created_after_setup(
 ) -> None:
     """Each Inverter is a device under the DTU device (via_device_id)."""
     dtu = SimDtu.default()
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await setup_entry(hass, dtu_network, dtu)
 
     assert entry.state == ConfigEntryState.LOADED
 
@@ -78,28 +53,7 @@ async def test_dtu_device_name_and_firmware(
 ) -> None:
     """The DTU device has the hostname as name and firmware as sw_version."""
     dtu = SimDtu.default()
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import device_registry as dr
 
@@ -130,28 +84,7 @@ async def test_inverter_entity_states(
         rated_power=1500,
         model="HM-1500-4T",
     )
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import entity_registry as er
 
@@ -185,28 +118,7 @@ async def test_values_refresh_on_interval(
 ) -> None:
     """Entity values refresh after DTU_UPDATE_INTERVAL."""
     dtu = SimDtu.default()
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import entity_registry as er
 
@@ -234,28 +146,7 @@ async def test_entities_unavailable_when_dtu_down(
 ) -> None:
     """Entities become unavailable when DTU is down; recover when it comes up."""
     dtu = SimDtu.default()
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import entity_registry as er
 
@@ -294,27 +185,8 @@ async def test_dtu_down_at_start_does_not_block_setup(
     """A down DTU at startup does not prevent setup (entry LOADED)."""
     dtu = SimDtu.default()
     dtu.down = True
-    dtu_network.add(dtu)
-    dtu_network.apply()
+    entry = await setup_entry(hass, dtu_network, dtu)
 
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    assert await hass.config_entries.async_setup(entry.entry_id)
     assert entry.state == ConfigEntryState.LOADED
 
 
@@ -327,43 +199,12 @@ async def test_second_dtu_works_while_first_down(
     dtu1.down = True
     dtu1.serial = "111111111111"
     dtu1.base_url = "http://down.local"
-    dtu_network.add(dtu1)
 
     # Add working DTU
     dtu2 = SimDtu.default()
     dtu2.serial = "199980126212"
-    dtu_network.add(dtu2)
 
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://down.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "111111111111",
-                "title": "Down-DTU",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            },
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            },
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await setup_entry(hass, dtu_network, dtu1, dtu2)
 
     from homeassistant.helpers import entity_registry as er
 
@@ -398,28 +239,7 @@ async def test_empty_detail_gives_unknown_power(
     """Inverter with detail_empty=True has power state unknown."""
     dtu = SimDtu.default()
     dtu.inverters[0].detail_empty = True
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import entity_registry as er
 
@@ -443,28 +263,7 @@ async def test_devinfo_invalid_then_valid(
     dtu = SimDtu.default()
     dtu.inverters[1].devinfo_valid = False
     dtu.inverters[1].model = None
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import device_registry as dr
 
@@ -495,28 +294,7 @@ async def test_new_inverter_gets_entities_without_reload(
     """New Inverter in simulator gets device and entities without reload."""
     dtu = SimDtu.default()
     dtu.inverters = dtu.inverters[:2]  # Only 2 inverters
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    entry = await setup_entry(hass, dtu_network, dtu)
 
     from homeassistant.helpers import device_registry as dr
     from homeassistant.helpers import entity_registry as er
@@ -554,28 +332,7 @@ async def test_only_get_requests_sent(
 ) -> None:
     """Only GET requests are ever sent to the DTU."""
     dtu = SimDtu.default()
-    dtu_network.add(dtu)
-    dtu_network.apply()
-
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        data={},
-        subentries_data=[
-            {
-                "data": {
-                    CONF_URL: "http://opendtu.local",
-                    CONF_PASSWORD: "password",
-                },
-                "unique_id": "199980126212",
-                "title": "OpenDTU-Buero",
-                "subentry_type": SUBENTRY_TYPE_DTU,
-            }
-        ],
-    )
-    entry.add_to_hass(hass)
-
-    await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+    await setup_entry(hass, dtu_network, dtu)
 
     # All calls should be GET
     assert len(aioclient_mock.mock_calls) > 0

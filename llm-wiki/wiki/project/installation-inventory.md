@@ -3,7 +3,7 @@ type: Reference
 title: Installation inventory
 description: The three DTUs and twelve inverters as read from the OpenDTU APIs, with models, rated power and observations that affect the design.
 tags: [project, hardware, opendtu, hoymiles]
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T19:30:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T21:30:00Z }
 stale_after: 2027-04-04T00:00:00Z
 sources:
   - id: dtu-api
@@ -55,6 +55,7 @@ Four Anker Solix E1600 feed two HM-1200 inverters.[^soeren-answers] "Büro 3" an
 - **After a restart the reported limit is 0 %** with status "Ok" until the DTU has read it back, so a reported limit cannot be trusted shortly after a DTU restart.[^dtu-api]
 - **Per-inverter power needs one request each.** The summary `GET /api/livedata/status` carries no power values; AC power is only in `?inv=<serial>`. An unknown serial answers `{"inverters": []}`. Reads need no authentication; `/api/dtu/config` and `/api/inverter/list` answer HTTP 401 with an empty body without the admin password.[^dtu-api]
 - **At night** the DTU sets `poll_enabled` to false, reports every inverter as unreachable and lets `data_age` grow; AC values are still present, as zeros.[^dtu-api]
+- **A restart through the API takes about 6 s.** `POST /api/maintenance/reboot` on the Büro DTU (2026-10-04, at night): the DTU answered again 6 s later with an uptime of 5 s. Until an inverter answers, its `data_age` equals the DTU's uptime, so a restarted DTU looks fresh for the first minutes; the restart policy therefore draws no conclusion during its waiting time.[^dtu-api]
 - The HMS-1600-4T uses the CMT radio, the HM models the NRF24 radio, so the Büro DTU carries both.
 
 [^dtu-api]: OpenDTU API read-out on 2026-10-04 around 10:10 UTC

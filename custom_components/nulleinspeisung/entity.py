@@ -83,3 +83,38 @@ def setup_inverter_entities(
 
         add_new()
         entry.async_on_unload(coordinator.async_add_listener(add_new))
+
+
+class DtuEntity(CoordinatorEntity[DtuCoordinator]):
+    """An entity of the DTU itself, shown on the DTU's device."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: DtuCoordinator, key: str) -> None:
+        """Create the entity ``key`` of this DTU."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dtu_serial}_{key}"
+        self._attr_device_info = dtu_device_info(coordinator)
+
+
+def setup_dtu_entities(
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    build: Callable[[DtuCoordinator], list[Entity]],
+) -> None:
+    """Add the entities of every DTU as soon as its device exists."""
+    for subentry_id, coordinator in entry.runtime_data.items():
+        added = False
+
+        def add_once(
+            coordinator: DtuCoordinator = coordinator,
+            subentry_id: str = subentry_id,
+        ) -> None:
+            nonlocal added
+            if added or coordinator.data is None:
+                return
+            added = True
+            async_add_entities(build(coordinator), config_subentry_id=subentry_id)
+
+        add_once()
+        entry.async_on_unload(coordinator.async_add_listener(add_once))

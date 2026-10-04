@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-04
+* **Update**: [Installation inventory](project/installation-inventory.md): measured a DTU restart through the API on the real Büro DTU.
 * **Update**: [Development workflow](project/development-workflow.md): Sonnet now writes the tests, Haiku only runs them.
 * **Update**: [Installation inventory](project/installation-inventory.md): Büro 3 confirmed as HM-1200-4T; added API observations made while building ticket 02.
 * **Update**: [Overview](project/overview.md) now points to the spec and tickets under `.scratch/nulleinspeisung/`.
