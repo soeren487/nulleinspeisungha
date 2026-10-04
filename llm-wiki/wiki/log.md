@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-10-05
+* **Update**: [Tibber prices](research/tibber-api-prices.md): query confirmed against the real API, error answers recorded. [Overview](project/overview.md): ticket 06 done, trial on production, repository public.
+
 ## 2026-10-04
 * **Update**: [Requirements decisions](project/requirements-decisions.md): the cross-DTU stuck rule now requires a PV inverter producing at least 50 W; [Overview](project/overview.md): ticket 05 done.
 * **Update**: [Overview](project/overview.md): tickets 01 to 04 done.

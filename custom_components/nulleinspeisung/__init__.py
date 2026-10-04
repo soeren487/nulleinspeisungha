@@ -19,6 +19,7 @@ from .house_knowledge import HouseKnowledge
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
+    Platform.NUMBER,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -70,6 +71,10 @@ async def async_setup_entry(
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # The entities have restored the owner's settings; only now may the loop run.
+    for house in houses.values():
+        entry.async_on_unload(house.control.stop)
+        house.control.start()
     return True
 
 

@@ -1,0 +1,18 @@
+{
+ "data": {
+  "viewer": {
+   "homes": [
+    {
+     "id": "00000000-0000-4000-8000-000000000001",
+     "appNickname": "Home 1",
+     "timeZone": "Europe/Berlin"
+    },
+    {
+     "id": "00000000-0000-4000-8000-000000000002",
+     "appNickname": "Home 2",
+     "timeZone": "Europe/Berlin"
+    }
+   ]
+  }
+ }
+}

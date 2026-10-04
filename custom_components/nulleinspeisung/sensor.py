@@ -21,6 +21,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
+from .curtailment import ControlState
 from .dtu_models import InverterSnapshot
 from .entity import (
     DtuEntity,
@@ -149,7 +150,9 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda house: [
-            HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS
+            *(HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS),
+            ControlStateSensor(house),
+            InverterLimitSensor(house),
         ],
     )
 
@@ -269,3 +272,46 @@ class HouseSensor(HouseEntity, SensorEntity):
     def available(self) -> bool:
         """Whether the value is known."""
         return self.entity_description.always_available or self.native_value is not None
+
+
+class _ControlSensor(HouseEntity, SensorEntity):
+    """A sensor that follows the House's control loop."""
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the control changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.house.control.async_add_listener(self._handle_change))
+
+
+class ControlStateSensor(_ControlSensor):
+    """What the House's control is doing."""
+
+    _attr_translation_key = "control_state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = tuple(state.value for state in ControlState)  # type: ignore[assignment]
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "control_state")
+
+    @property
+    def native_value(self) -> str:
+        """The control state."""
+        return self.house.control.state.value
+
+
+class InverterLimitSensor(_ControlSensor):
+    """The Inverter Limit the House currently asks of its Inverters."""
+
+    _attr_translation_key = "inverter_limit"
+    _attr_native_unit_of_measurement = PERCENTAGE
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "inverter_limit")
+
+    @property
+    def native_value(self) -> int | None:
+        """Percent asked of the group; unknown while Curtailment is off."""
+        control = self.house.control
+        return control.requested_percent if control.curtailment else None

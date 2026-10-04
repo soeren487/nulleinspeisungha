@@ -177,6 +177,20 @@
       },
       "inverter_count": {
         "name": "Assigned Inverters"
+      },
+      "control_state": {
+        "name": "Control state",
+        "state": {
+          "off": "Off",
+          "holding": "Holding",
+          "lowering": "Lowering",
+          "raising": "Raising",
+          "no_grid_power": "No Grid Power",
+          "no_inverter": "No Inverter"
+        }
+      },
+      "inverter_limit": {
+        "name": "Inverter Limit"
       }
     },
     "button": {
@@ -187,6 +201,23 @@
     "switch": {
       "automatic_restart": {
         "name": "Automatic restart"
+      },
+      "curtailment": {
+        "name": "Curtailment"
+      }
+    },
+    "number": {
+      "feed_in_setpoint": {
+        "name": "Feed-in Setpoint"
+      },
+      "update_interval": {
+        "name": "Update Interval"
+      },
+      "tolerance_band": {
+        "name": "Tolerance band"
+      },
+      "limit_floor": {
+        "name": "Limit floor"
       }
     }
   },

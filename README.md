@@ -10,10 +10,8 @@ Early development. The integration can currently only be added and removed; none
 
 ### HACS (custom repository)
 
-HACS installs from GitHub only, so this path works once the repository is mirrored to GitHub; until then use the manual installation below.
-
 1. In HACS, open the menu and choose "Custom repositories".
-2. Add this repository's URL with the category "Integration".
+2. Add `https://github.com/soeren487/nulleinspeisungha` with the category "Integration".
 3. Download "Nulleinspeisung" and restart Home Assistant.
 4. Add the integration under Settings > Devices & services.
 

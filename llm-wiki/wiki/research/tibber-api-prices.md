@@ -77,7 +77,7 @@ sources:
 }
 ```
 
-- `viewer.homes` is "All homes visible to the logged-in user"; a single home is addressed with `viewer.home(id: "...")`.[^tibber-reference] The query above is assembled from the schema and the changelog example; it was not executed for this page.
+- `viewer.homes` is "All homes visible to the logged-in user"; a single home is addressed with `viewer.home(id: "...")`.[^tibber-reference] The query above is assembled from the schema and the changelog example. It was run against the real API on 2026-10-05 with Soeren's token: HTTP 200, 96 items each for today and tomorrow, levels as documented. An invalid token also answers HTTP 200, with `errors[0].extensions.code` = `UNAUTHENTICATED` and `data: null`; an unknown home id gives code `HOME_NOT_FOUND`. Sanitised answers are in `tests/fixtures/tibber/`.
 - Tibber recommends smaller queries, one concern per request, over one large query for all homes.[^tibber-guide] pyTibber queries prices per home id.[^pytibber]
 - A home without an active subscription returns `currentSubscription: null`; pyTibber handles that case explicitly.[^pytibber]
 
