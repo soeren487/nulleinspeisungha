@@ -4,10 +4,14 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The integration can be added once through the Settings UI; a second attempt is refused
-- [ ] All texts exist in English and German
-- [ ] A test sets up the integration in a test Home Assistant and passes
-- [ ] One command runs the tests and one runs the linters; both are documented in CLAUDE.md
-- [ ] The repository contains what HACS requires for a custom repository, and the README explains manual installation
+- [x] The integration can be added once through the Settings UI; a second attempt is refused
+- [x] All texts exist in English and German
+- [x] A test sets up the integration in a test Home Assistant and passes
+- [x] One command runs the tests and one runs the linters; both are documented in CLAUDE.md
+- [x] The repository contains what HACS requires for a custom repository, and the README explains manual installation
+
+## Comments
+
+2026-10-04: Implemented on branch `ticket-01-integration-skeleton`. 10 tests pass, linters clean. Verified through Home Assistant's flow API in the test harness; not yet installed on the production Home Assistant. `documentation`, `issue_tracker` and `codeowners` in the manifest are left empty until the GitHub mirror exists; HACS requires them.

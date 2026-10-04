@@ -1,0 +1,11 @@
+{
+  "domain": "nulleinspeisung",
+  "name": "Nulleinspeisung",
+  "codeowners": [],
+  "config_flow": true,
+  "integration_type": "hub",
+  "iot_class": "local_polling",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.1.0"
+}

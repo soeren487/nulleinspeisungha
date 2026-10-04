@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Commands
+
+Python tooling runs through `uv` (Python 3.14, versions pinned in `uv.lock`).
+
+- Run all tests: `uv run pytest`
+- Run a single test: `uv run pytest tests/test_x.py::test_name` (or `-k name`)
+- Lint and format check: `uv run ruff check . && uv run ruff format --check .` (fix with `uv run ruff check --fix . && uv run ruff format .`)
+
 ## Project wiki
 
 `llm-wiki/wiki/` is the project's knowledge base, written and maintained by the agent. It exists so that knowledge is worked out once and then looked up, not re-derived each session.
