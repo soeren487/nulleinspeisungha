@@ -17,10 +17,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 import custom_components  # noqa: F401
 from custom_components.nulleinspeisung.const import (
+    CONF_BATTERY_BACKED,
+    CONF_GRID_METER,
+    CONF_GRID_METER_SIGN,
+    CONF_INVERTERS,
+    CONF_LATITUDE,
+    CONF_LONGITUDE,
     CONF_PASSWORD,
     CONF_URL,
     DOMAIN,
+    SIGN_IMPORT,
     SUBENTRY_TYPE_DTU,
+    SUBENTRY_TYPE_HOUSE,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opendtu"
@@ -328,14 +336,46 @@ def dtu_network(aioclient_mock: MagicMock) -> DtuNetwork:
     return DtuNetwork(aioclient_mock)
 
 
+@dataclass
+class SimHouse:
+    """A House as stored in its config subentry."""
+
+    name: str
+    grid_meter: str = "sensor.grid_meter"
+    sign: str = SIGN_IMPORT
+    inverters: list[str] = field(default_factory=list)
+    battery_backed: list[str] = field(default_factory=list)
+    unique_id: str | None = None
+
+    def subentry_data(self) -> dict[str, Any]:
+        """The subentry as ``MockConfigEntry`` takes it."""
+        return {
+            "data": {
+                CONF_LATITUDE: 52.5,
+                CONF_LONGITUDE: 13.4,
+                CONF_GRID_METER: self.grid_meter,
+                CONF_GRID_METER_SIGN: self.sign,
+                CONF_INVERTERS: self.inverters,
+                CONF_BATTERY_BACKED: self.battery_backed,
+            },
+            "unique_id": self.unique_id or f"house-{self.name.casefold()}",
+            "title": self.name,
+            "subentry_type": SUBENTRY_TYPE_HOUSE,
+        }
+
+
 async def setup_entry(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
     *dtus: SimDtu,
     settings: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
+    houses: list[SimHouse] | None = None,
 ) -> MockConfigEntry:
-    """Put the DTUs on the simulated network and set up an entry with them."""
+    """Put the DTUs on the simulated network and set up an entry with them.
+
+    ``houses`` are added as House subentries after the DTUs.
+    """
     for dtu in dtus:
         dtu_network.add(dtu)
     dtu_network.apply()
@@ -355,9 +395,24 @@ async def setup_entry(
                 "subentry_type": SUBENTRY_TYPE_DTU,
             }
             for dtu in dtus
-        ],
+        ]
+        + [house.subentry_data() for house in houses or []],
     )
     entry.add_to_hass(hass)
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     return entry
+
+
+def second_dtu() -> SimDtu:
+    """A second DTU with two Inverters whose serials differ from the default."""
+    dtu = SimDtu.default()
+    dtu.base_url = "http://opendtu-garage.local"
+    dtu.serial = "199980126999"
+    dtu.hostname = "OpenDTU-Garage"
+    dtu.inverters = dtu.inverters[:2]
+    dtu.inverters[0].serial = "200000000001"
+    dtu.inverters[0].name = "Garage 1"
+    dtu.inverters[1].serial = "200000000002"
+    dtu.inverters[1].name = "Garage 2"
+    return dtu

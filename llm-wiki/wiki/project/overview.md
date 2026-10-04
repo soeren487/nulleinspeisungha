@@ -4,7 +4,7 @@ title: Overview
 description: What nulleinspeisungha is, the installation it controls, and where the project stands.
 tags: [project]
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T13:10:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T22:10:00Z }
 sources:
   - id: initial-requirements
     resource: ../../raw/2026-10-04-initial-requirements.md
@@ -41,7 +41,7 @@ Shared across both houses:[^initial-requirements]
 
 # State
 
-- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`. No source code yet.[^repo-state]
+- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`; each ticket file carries its status. Tickets 01 to 04 are done as of 2026-10-04: the integration installs, connects DTUs, restarts a stuck DTU, and has Houses with a grid meter and assigned inverters. Nothing has been installed on the production Home Assistant yet.[^repo-state]
 - Remote `origin` is a self-hosted forge at `docker.lan.slcl.eu:2424` (`soeren/nulleinspeisungha`); its type is not identified.[^repo-state]
 
 # Related

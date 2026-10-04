@@ -29,3 +29,21 @@ DEFAULT_STALENESS_TIME = 120
 """Seconds without fresh Inverter data after which a DTU counts as silent."""
 DEFAULT_RESTART_WAIT = 180
 """Seconds to wait after a restart before judging the DTU again."""
+
+SUBENTRY_TYPE_HOUSE = "house"
+
+CONF_NAME = "name"
+CONF_LOCATION = "location"
+CONF_LATITUDE = "latitude"
+CONF_LONGITUDE = "longitude"
+CONF_GRID_METER = "grid_meter"
+CONF_GRID_METER_SIGN = "grid_meter_sign"
+CONF_INVERTERS = "inverters"
+CONF_BATTERY_BACKED = "battery_backed"
+
+SIGN_IMPORT = "import"
+"""The Grid Meter reports positive values for import."""
+SIGN_EXPORT = "export"
+"""The Grid Meter reports positive values for export."""
+
+HOUSE_MODEL = "House"
