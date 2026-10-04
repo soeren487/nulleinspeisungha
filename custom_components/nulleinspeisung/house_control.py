@@ -19,8 +19,10 @@ from homeassistant.core import CALLBACK_TYPE, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .alerts import raise_alert, resolve_alert
 from .curtailment import ControllableInverter, ControlState, decide
 from .dtu_client import DtuAuthError, DtuConnectionError
+from .failure import Assessment, FailureWatch
 from .limit_split import LimitSplit, split_equally
 
 if TYPE_CHECKING:
@@ -35,6 +37,18 @@ DEFAULT_LIMIT_FLOOR = 5.0
 
 FULL_LIMIT = 100
 """Percent an Inverter is given when Curtailment is switched off."""
+
+ON_FAILURE_HOLD = "hold"
+ON_FAILURE_FULL = "full"
+ON_FAILURE_OPTIONS = (ON_FAILURE_HOLD, ON_FAILURE_FULL)
+
+ISSUE_GRID_METER = "grid_meter_failure"
+ISSUE_DTUS = "dtu_failure"
+ENGLISH_TITLES = {
+    ISSUE_GRID_METER: "Grid Meter of House {house} delivers no data",
+    ISSUE_DTUS: "No DTU of House {house} answers",
+}
+"""Used when no translation can be loaded."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +76,16 @@ class HouseControl:
         self.limit_floor = DEFAULT_LIMIT_FLOOR
         self._update_interval = DEFAULT_UPDATE_INTERVAL
         self.state = ControlState.OFF
+        self.on_failure = ON_FAILURE_HOLD
+        """What to do with the Inverters in the failure state."""
         self.requested_percent: int | None = None
         """The percent the House currently asks of its group."""
+        self._watch = FailureWatch()
+        self._in_failure = False
+        self._generations: dict[str, int] = {}
+        """Restart generation of each DTU at the previous run."""
+        self._pending: dict[str, int] = {}
+        """Limits to send again after a DTU restart, by Inverter serial."""
         self._sent: dict[str, int] = {}
         self._sent_at: dict[str, float] = {}
         """Seconds (Home Assistant clock) at which each limit was sent."""
@@ -138,6 +160,7 @@ class HouseControl:
             await self._async_release()
             self.state = ControlState.OFF
             self.requested_percent = None
+            self._clear_failure()
         self._notify()
 
     def _schedule(self) -> None:
@@ -167,10 +190,63 @@ class HouseControl:
                 await self._async_step_locked()
         self._notify()
 
+    def _clear_failure(self) -> None:
+        self._watch.reset()
+        self._in_failure = False
+        self._pending.clear()
+        self._sync_issues(Assessment())
+
+    def _sync_issues(self, assessment: Assessment) -> None:
+        """Raise or clear the repair issue of each kind of failure."""
+        house = self._house
+        for kind, failed in (
+            (ISSUE_GRID_METER, assessment.grid_meter),
+            (ISSUE_DTUS, assessment.dtus),
+        ):
+            issue_id = f"{kind}_{house.config.unique_id}"
+            if not failed:
+                resolve_alert(house.hass, issue_id)
+            elif house.entry is not None:
+                raise_alert(
+                    house.hass,
+                    house.entry,
+                    issue_id,
+                    kind,
+                    {"house": house.config.name},
+                    ENGLISH_TITLES[kind],
+                )
+
+    def _note_restarts(self) -> None:
+        """Queue the limits sent to a DTU that restarted since the last run."""
+        for key, dtu in self._house.dtus.items():
+            generation = dtu.restart_generation
+            previous = self._generations.get(key, generation)
+            self._generations[key] = generation
+            if generation == previous or dtu.data is None:
+                continue
+            for serial in list(self._sent):
+                if serial in dtu.data.inverters:
+                    self._pending[serial] = self._sent.pop(serial)
+                    self._sent_at.pop(serial, None)
+
     async def _async_step_locked(self) -> None:
+        self._note_restarts()
         grid_power = self._house.grid_power()
+        assessment = self._watch.assess(
+            dt_util.utcnow().timestamp(),
+            self._update_interval,
+            grid_power,
+            self._house.grid_meter_last_reported(),
+            self._house.dtus_answering(),
+        )
+        self._sync_issues(assessment)
+        if assessment.failed:
+            await self._async_fail()
+            return
+        self._in_failure = False
         if grid_power is None:
             self.state = ControlState.NO_GRID_POWER
+            await self._async_resend(self._controllable())
             return
         group = self._controllable()
         # An Inverter we cannot reach may lose its non-persistent limit.
@@ -189,7 +265,9 @@ class HouseControl:
                 ControllableInverter(
                     rated_power=i.rated_power,
                     production=i.production if self._reading_is_new(i, now) else None,
-                    limit=self._sent.get(i.serial, FULL_LIMIT),
+                    limit=self._sent.get(
+                        i.serial, self._pending.get(i.serial, FULL_LIMIT)
+                    ),
                 )
                 for i in group
             ],
@@ -197,6 +275,7 @@ class HouseControl:
         self.state = decision.state
         if decision.allowed_power is None:
             self.requested_percent = None
+            await self._async_resend(group)
             return
         percents = self._split(
             decision.allowed_power,
@@ -207,15 +286,43 @@ class HouseControl:
             self.requested_percent is None or decision.state is not ControlState.HOLDING
         ):
             self.requested_percent = round(sum(percents.values()) / len(percents))
-        if decision.state is ControlState.HOLDING:
-            return
+        if decision.state is not ControlState.HOLDING:
+            for inverter in group:
+                percent = percents[inverter.serial]
+                if self._sent.get(inverter.serial) == percent:
+                    continue
+                if await self._async_send(inverter.dtu_key, inverter.serial, percent):
+                    self._remember(inverter.serial, percent)
+        await self._async_resend(group)
+
+    def _remember(self, serial: str, percent: int) -> None:
+        self._sent[serial] = percent
+        self._sent_at[serial] = dt_util.utcnow().timestamp()
+        self._pending.pop(serial, None)
+
+    async def _async_resend(self, group: list[_Controllable]) -> None:
+        """Send again what a restarted DTU lost, to Inverters that are reachable.
+
+        This repeats the House's current target; it is not a new decision, so
+        it happens whether or not the current step is holding.
+        """
         for inverter in group:
-            percent = percents[inverter.serial]
-            if self._sent.get(inverter.serial) == percent:
+            percent = self._pending.get(inverter.serial)
+            if percent is None:
                 continue
             if await self._async_send(inverter.dtu_key, inverter.serial, percent):
-                self._sent[inverter.serial] = percent
-                self._sent_at[inverter.serial] = dt_util.utcnow().timestamp()
+                self._remember(inverter.serial, percent)
+
+    async def _async_fail(self) -> None:
+        """Carry out the failure state; the first run in it acts on the choice."""
+        self.state = ControlState.FAILURE
+        if self._in_failure:
+            return
+        self._in_failure = True
+        if self.on_failure == ON_FAILURE_FULL:
+            await self._async_release()
+            self._pending.clear()
+            self.requested_percent = FULL_LIMIT
 
     def _reading_is_new(self, inverter: _Controllable, now: float) -> bool:
         """Whether the production was measured after the last limit was sent."""

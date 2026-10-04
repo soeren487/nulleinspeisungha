@@ -42,6 +42,8 @@ class DtuSource(Protocol):
     client: DtuClient
     data: DtuSnapshot | None
     last_update_success: bool
+    restart_generation: int
+    """Changes whenever the DTU restarted."""
 
     def async_add_listener(
         self, update_callback: Callable[[], None], context: Any = None
@@ -127,11 +129,14 @@ class House:
         config: HouseConfig,
         dtus: Mapping[str, DtuSource],
         prices: HousePrices | None = None,
+        entry: ConfigEntry | None = None,
     ) -> None:
         """Create the House on top of the coordinators of the entry's DTUs."""
         self.hass = hass
         self.config = config
         self.dtus = dtus
+        self.entry = entry
+        """The config entry, for alerts; without it no repair issue is raised."""
         self.prices = prices
         """The House's Tibber prices; ``None`` without a Tibber home and token.
 
@@ -149,6 +154,31 @@ class House:
         return grid_power_from_state(
             self.hass.states.get(self.config.grid_meter), self.config.grid_meter_sign
         )
+
+    def grid_meter_last_reported(self) -> float | None:
+        """When the Grid Meter's sensor last reported, as a timestamp.
+
+        Home Assistant updates this even when the value is unchanged.
+        """
+        state = self.hass.states.get(self.config.grid_meter)
+        return state.last_reported_timestamp if state is not None else None
+
+    def dtus_answering(self) -> bool | None:
+        """Whether any DTU of the House's Inverters answers.
+
+        ``None`` when the House has no Inverter or no DTU is known to hold any.
+        """
+        if not self.config.inverters:
+            return None
+        relevant = [
+            dtu
+            for dtu in self.dtus.values()
+            if dtu.data is None
+            or any(s in dtu.data.inverters for s in self.config.inverters)
+        ]
+        if not relevant:
+            return None
+        return any(dtu.last_update_success for dtu in relevant)
 
     def inverter_power(self, serial: str) -> float | None:
         """AC power of one Inverter, ``None`` if its DTU is down or it is unknown."""
