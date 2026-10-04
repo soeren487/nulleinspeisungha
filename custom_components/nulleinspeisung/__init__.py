@@ -9,6 +9,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
+from .battery_gateway import BatteryGateway
 from .const import CONF_PASSWORD, CONF_TIBBER_TOKEN, CONF_URL, SUBENTRY_TYPE_DTU
 from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
@@ -93,7 +94,15 @@ async def async_setup_entry(
                 config.latitude,
                 config.longitude,
             )
-        house = House(hass, config, coordinators, prices, entry, forecast)
+        gateway = None
+        if config.gx_host:
+            gateway = BatteryGateway(
+                hass, config.gx_host, config.gx_port, config.gx_portal_id
+            )
+            # A GX that does not answer must not stop the entry from loading.
+            await gateway.async_start()
+            entry.async_on_unload(gateway.async_stop)
+        house = House(hass, config, coordinators, prices, entry, forecast, gateway)
         houses[subentry.subentry_id] = house
         if forecast is not None:
             # Open-Meteo being down must not stop the entry from loading.
@@ -107,6 +116,8 @@ async def async_setup_entry(
     for house in houses.values():
         entry.async_on_unload(house.control.stop)
         house.control.start()
+        entry.async_on_unload(house.battery_watch.stop)
+        house.battery_watch.start()
     return True
 
 

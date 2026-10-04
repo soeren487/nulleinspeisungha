@@ -15,14 +15,22 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
 
+from .battery_gateway import BatteryGateway, BatteryState
+from .battery_priority import battery_headroom
+from .battery_watch import BatteryWatch
 from .const import (
     CONF_BATTERY_BACKED,
+    CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GX_HOST,
+    CONF_GX_PORT,
+    CONF_GX_PORTAL_ID,
     CONF_INVERTERS,
     CONF_LATITUDE,
     CONF_LONGITUDE,
     CONF_TIBBER_HOME,
+    DEFAULT_GX_PORT,
     DOMAIN,
     SIGN_EXPORT,
     SIGN_IMPORT,
@@ -68,6 +76,12 @@ class HouseConfig:
     inverters: tuple[str, ...]
     battery_backed: tuple[str, ...]
     tibber_home: str | None = None
+    gx_host: str | None = None
+    """Address of the AC Battery's GX; ``None`` when the House has no AC Battery."""
+    gx_port: int = DEFAULT_GX_PORT
+    gx_portal_id: str | None = None
+    battery_capacity: float | None = None
+    """Usable capacity of the AC Battery in kWh."""
 
     @classmethod
     def from_subentry(cls, subentry: ConfigSubentry) -> HouseConfig:
@@ -87,6 +101,10 @@ class HouseConfig:
                 s for s in data.get(CONF_BATTERY_BACKED, ()) if s in inverters
             ),
             tibber_home=data.get(CONF_TIBBER_HOME) or None,
+            gx_host=data.get(CONF_GX_HOST) or None,
+            gx_port=int(data.get(CONF_GX_PORT, DEFAULT_GX_PORT)),
+            gx_portal_id=data.get(CONF_GX_PORTAL_ID) or None,
+            battery_capacity=data.get(CONF_BATTERY_CAPACITY),
         )
 
     @property
@@ -134,6 +152,7 @@ class House:
         prices: HousePrices | None = None,
         entry: ConfigEntry | None = None,
         forecast: HouseForecast | None = None,
+        gateway: BatteryGateway | None = None,
     ) -> None:
         """Create the House on top of the coordinators of the entry's DTUs."""
         self.hass = hass
@@ -146,7 +165,10 @@ class House:
 
         Later features read ``prices.current`` and ``prices.future`` from here.
         """
+        self.gateway = gateway
+        """The House's AC Battery; ``None`` without one."""
         self.control = HouseControl(self)
+        self.battery_watch = BatteryWatch(self)
         self.forecast = forecast
         """The House's PV Forecast; ``None`` without PV Inverters.
 
@@ -154,6 +176,48 @@ class House:
         """
         if forecast is not None:
             forecast.attach(self)
+
+    @property
+    def battery(self) -> BatteryState | None:
+        """The AC Battery's state; ``None`` when the House has none."""
+        return self.gateway.state if self.gateway is not None else None
+
+    def battery_headroom_raw(self) -> float:
+        """Charge power in W the AC Battery could still take, whatever happened."""
+        state = self.battery
+        if state is None:
+            return 0.0
+        return battery_headroom(
+            state.charge_level,
+            state.power,
+            state.voltage,
+            state.charge_current_limit,
+            self.control.maximum_charge_power,
+            state.fresh,
+        )
+
+    def battery_headroom(self) -> float:
+        """The headroom Curtailment may count on right now, in W."""
+        if self.control.headroom_suppressed():
+            return 0.0
+        return self.battery_headroom_raw()
+
+    def consumption(self) -> float | None:
+        """The House's consumption in W, ``None`` when it cannot be told.
+
+        Grid Power plus the production of the Inverters minus the power going
+        into the AC Battery.
+        """
+        grid = self.grid_power()
+        if grid is None:
+            return None
+        battery_power = 0.0
+        if self.gateway is not None:
+            state = self.gateway.state
+            if not state.fresh or state.power is None:
+                return None
+            battery_power = state.power
+        return grid + (self.inverter_production() or 0.0) - battery_power
 
     @property
     def inverter_count(self) -> int:

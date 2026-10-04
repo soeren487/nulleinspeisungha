@@ -20,6 +20,8 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .alerts import raise_alert, resolve_alert
+from .battery_priority import import_target
+from .battery_watch import ISSUE_SETPOINT_CONFLICT, sync_issue
 from .curtailment import ControllableInverter, ControlState, decide
 from .dtu_client import DtuAuthError, DtuConnectionError
 from .failure import Assessment, FailureWatch
@@ -34,6 +36,10 @@ DEFAULT_FEED_IN_SETPOINT = 0.0
 DEFAULT_UPDATE_INTERVAL = 15.0
 DEFAULT_TOLERANCE_BAND = 30.0
 DEFAULT_LIMIT_FLOOR = 5.0
+DEFAULT_MAXIMUM_CHARGE_POWER = 2100.0
+
+HEADROOM_SUPPRESSION = 300.0
+"""Seconds the battery headroom counts as zero after the House exported anyway."""
 
 FULL_LIMIT = 100
 """Percent an Inverter is given when Curtailment is switched off."""
@@ -74,6 +80,11 @@ class HouseControl:
         self.feed_in_setpoint = DEFAULT_FEED_IN_SETPOINT
         self.tolerance_band = DEFAULT_TOLERANCE_BAND
         self.limit_floor = DEFAULT_LIMIT_FLOOR
+        self.maximum_charge_power = DEFAULT_MAXIMUM_CHARGE_POWER
+        """The highest power in W at which the House's AC Battery can charge."""
+        self._headroom_suppressed_until = 0.0
+        self._export_seen = False
+        """The previous run exported beyond the band while headroom was positive."""
         self._update_interval = DEFAULT_UPDATE_INTERVAL
         self.state = ControlState.OFF
         self.on_failure = ON_FAILURE_HOLD
@@ -137,6 +148,15 @@ class HouseControl:
         self._update_interval = seconds
         if self._unsub_timer is not None:
             self._schedule()
+
+    def set_maximum_charge_power(self, watts: float) -> None:
+        """Change the Maximum Charge Power; it takes effect from the next run."""
+        self.maximum_charge_power = watts
+        self._notify()
+
+    def headroom_suppressed(self) -> bool:
+        """Whether the battery headroom is ignored after unabsorbed export."""
+        return dt_util.utcnow().timestamp() < self._headroom_suppressed_until
 
     # -- life cycle --------------------------------------------------------
 
@@ -206,7 +226,9 @@ class HouseControl:
         self._watch.reset()
         self._in_failure = False
         self._pending.clear()
+        self._export_seen = False
         self._sync_issues(Assessment())
+        sync_issue(self._house, ISSUE_SETPOINT_CONFLICT, False)
 
     def _sync_issues(self, assessment: Assessment) -> None:
         """Raise or clear the repair issue of each kind of failure."""
@@ -242,6 +264,7 @@ class HouseControl:
                     self._sent_at.pop(serial, None)
 
     async def _async_step_locked(self) -> None:
+        seen, self._export_seen = self._export_seen, False
         self._note_restarts()
         grid_power = self._house.grid_power()
         assessment = self._watch.assess(
@@ -268,9 +291,26 @@ class HouseControl:
                 self._sent.pop(serial)
                 self._sent_at.pop(serial, None)
         now = dt_util.utcnow().timestamp()
+        battery = self._house.battery
+        target, capped = import_target(
+            self.feed_in_setpoint, battery.grid_setpoint if battery else None
+        )
+        sync_issue(self._house, ISSUE_SETPOINT_CONFLICT, capped)
+        headroom = self._house.battery_headroom_raw()
+        if headroom > 0 and grid_power - target < -self.tolerance_band:
+            if self.headroom_suppressed() or seen:
+                # The battery was said to take more, yet the House exports
+                # again: it tapers without the BMS saying so.
+                self._headroom_suppressed_until = now + HEADROOM_SUPPRESSION
+            else:
+                # A battery ramps up over seconds: give it one Update Interval.
+                self._export_seen = True
+                self.state = ControlState.HOLDING
+                await self._async_resend(group)
+                return
         decision = decide(
             grid_power,
-            self.feed_in_setpoint,
+            -target + 0.0,
             self.tolerance_band,
             self.limit_floor,
             [
@@ -283,6 +323,7 @@ class HouseControl:
                 )
                 for i in group
             ],
+            0.0 if self.headroom_suppressed() else headroom,
         )
         self.state = decision.state
         if decision.allowed_power is None:

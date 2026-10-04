@@ -124,13 +124,29 @@
           "data_description": {
             "battery_backed": "Wechselrichter, deren Eingang eine DC-Batterie ist"
           }
+        },
+        "ac_battery": {
+          "title": "AC-Batterie",
+          "description": "Wenn das Haus eine AC-Batterie hat, gib die Adresse ihres Victron GX ein. Lass die Adresse leer, wenn es keine gibt. Der GX muss MQTT ohne Passwort auf diesem Port erlauben.",
+          "data": {
+            "gx_host": "GX-Adresse",
+            "gx_port": "MQTT-Port",
+            "battery_capacity": "Nutzbare Kapazität"
+          },
+          "data_description": {
+            "gx_host": "Hostname oder IP-Adresse des GX",
+            "gx_port": "Port des MQTT-Brokers des GX",
+            "battery_capacity": "Nutzbare Kapazität der AC-Batterie in kWh"
+          }
         }
       },
       "error": {
         "name_exists": "Ein Haus mit diesem Namen gibt es bereits.",
         "name_required": "Gib einen Namen ein.",
         "inverter_assigned": "Ein gewählter Wechselrichter gehört bereits zu einem anderen Haus.",
-        "tibber_home_assigned": "Dieses Tibber-Zuhause gehört bereits zu einem anderen Haus."
+        "tibber_home_assigned": "Dieses Tibber-Zuhause gehört bereits zu einem anderen Haus.",
+        "cannot_connect": "Der GX antwortet unter dieser Adresse und diesem Port nicht.",
+        "gx_assigned": "Dieser GX gehört bereits zu einem anderen Haus."
       },
       "abort": {
         "reconfigure_successful": "Das Haus wurde aktualisiert."
@@ -150,6 +166,9 @@
       },
       "pv_forecast_usable": {
         "name": "PV-Prognose verwendbar"
+      },
+      "battery_connected": {
+        "name": "AC-Batterie verbunden"
       }
     },
     "sensor": {
@@ -228,6 +247,18 @@
       },
       "pv_forecast_history_days": {
         "name": "PV-Prognose Verlaufstage"
+      },
+      "battery_soc": {
+        "name": "Ladestand der AC-Batterie"
+      },
+      "battery_power": {
+        "name": "Leistung der AC-Batterie"
+      },
+      "battery_headroom": {
+        "name": "Spielraum der AC-Batterie"
+      },
+      "consumption": {
+        "name": "Verbrauch"
       }
     },
     "button": {
@@ -255,6 +286,9 @@
       },
       "limit_floor": {
         "name": "Untergrenze des Limits"
+      },
+      "maximum_charge_power": {
+        "name": "Maximale Ladeleistung"
       }
     },
     "select": {
@@ -315,6 +349,18 @@
     "pv_forecast_unavailable": {
       "title": "PV-Prognose für Haus {house} nicht verfügbar",
       "description": "Die Einstrahlungsprognose für {house} konnte seit mehr als 6 Stunden nicht abgerufen werden, daher veraltet die PV-Prognose. Prüfe die Internetverbindung von Home Assistant. Die Prognose wird automatisch erneut abgerufen."
+    },
+    "battery_not_answering": {
+      "title": "AC-Batterie von Haus {house} antwortet nicht",
+      "description": "Der GX der AC-Batterie von {house} liefert seit mehr als zwei Minuten keine Werte. Die Regelung läuft weiter, ohne auf die Batterie zu setzen. Prüfe den GX und seine Netzwerkverbindung. Die Verbindung wird von selbst wiederhergestellt."
+    },
+    "dynamic_ess_active": {
+      "title": "Dynamic ESS ist bei der AC-Batterie von Haus {house} aktiv",
+      "description": "Dynamic ESS ist am GX von {house} eingeschaltet und plant die Batterie selbst, was dieser Integration widerspricht. Schalte Dynamic ESS am GX aus."
+    },
+    "feed_in_conflicts_battery_setpoint": {
+      "title": "Einspeise-Sollwert von Haus {house} verlangt mehr Bezug als der Netzsollwert der AC-Batterie",
+      "description": "Der negative Einspeise-Sollwert von {house} verlangt mehr Bezug als der im GX der AC-Batterie gespeicherte Netzsollwert. Die Regelung zielt stattdessen auf den Netzsollwert der Batterie. Erhöhe den Netzsollwert am GX oder den Einspeise-Sollwert."
     }
   },
   "selector": {

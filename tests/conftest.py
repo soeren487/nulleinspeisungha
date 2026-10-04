@@ -24,8 +24,12 @@ from pytest_homeassistant_custom_component.test_util.aiohttp import (
 import custom_components  # noqa: F401
 from custom_components.nulleinspeisung.const import (
     CONF_BATTERY_BACKED,
+    CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GX_HOST,
+    CONF_GX_PORT,
+    CONF_GX_PORTAL_ID,
     CONF_INVERTERS,
     CONF_LATITUDE,
     CONF_LONGITUDE,
@@ -637,6 +641,205 @@ def seed_history(
     }
 
 
+VICTRON_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "victron"
+
+
+def recorded_gx_topics() -> tuple[str, dict[str, str]]:
+    """The recorded GX: its portal id and its topics below ``N/<portal id>/``."""
+    with open(VICTRON_FIXTURE_DIR / "topics.json") as f:
+        recording = json.load(f)
+    return recording["portal_id"], dict(recording["topics"])
+
+
+def _topic_matches(topic_filter: str, topic: str) -> bool:
+    """Whether an MQTT topic filter (``+`` wildcard) matches a topic."""
+    parts, wanted = topic_filter.split("/"), topic.split("/")
+    return len(parts) == len(wanted) and all(
+        f in ("+", t) for f, t in zip(parts, wanted, strict=True)
+    )
+
+
+class FakeTransport:
+    """The MQTT client of the integration, connected to a ``SimGx``."""
+
+    def __init__(self, hosts: dict[tuple[str, int], SimGx]) -> None:
+        """Create a client that is not connected."""
+        self._hosts = hosts
+        self.gx: SimGx | None = None
+        self.connected = False
+        self.closed = False
+        self.subscriptions: list[str] = []
+        """The topic filters this client holds now."""
+        self.on_connect: Callable[[], None] = lambda: None
+        self.on_disconnect: Callable[[], None] = lambda: None
+        self.on_message: Callable[[str, bytes], None] = lambda topic, payload: None
+
+    def set_handlers(self, *, on_connect, on_disconnect, on_message) -> None:
+        """Remember who to call."""
+        self.on_connect = on_connect
+        self.on_disconnect = on_disconnect
+        self.on_message = on_message
+
+    async def async_connect(self, host: str, port: int) -> None:
+        """Connect now if a GX listens there and is up; else keep trying."""
+        self.gx = self._hosts.get((host, port))
+        if self.gx is None:
+            return
+        self.gx.clients.append(self)
+        if not self.gx.down:
+            self.gx.connect(self)
+
+    def subscribe(self, topic: str) -> None:
+        """Subscribe; the broker sends the retained serial at once."""
+        assert self.connected, "subscribe while not connected"
+        self.subscriptions.append(topic)
+        assert self.gx is not None
+        self.gx.subscribed(self, topic)
+
+    def publish(self, topic: str, payload: bytes) -> None:
+        """Publish to the GX."""
+        assert self.connected, "publish while not connected"
+        assert self.gx is not None
+        self.gx.received(self, topic, payload)
+
+    async def async_close(self) -> None:
+        """Leave the GX for good."""
+        self.closed = True
+        self.connected = False
+        if self.gx is not None and self in self.gx.clients:
+            self.gx.clients.remove(self)
+
+
+class SimGx:
+    """A simulated Victron GX with its MQTT broker, answering from recorded topics.
+
+    It holds the recorded values, hands them to subscribers when they ask for a
+    full republish (an empty keepalive) or when a test changes one, and records
+    everything published to it.
+    """
+
+    def __init__(self, host: str = "gx.test", port: int = 1883) -> None:
+        """Start up with the recorded values."""
+        self.host = host
+        self.port = port
+        self.portal_id, self.topics = recorded_gx_topics()
+        self.down = False
+        self.clients: list[FakeTransport] = []
+        self.published: list[tuple[str, bytes]] = []
+        """Everything the integration published, in order."""
+
+    @property
+    def keepalives(self) -> list[bytes]:
+        """The payloads of the keepalive messages received."""
+        return [
+            payload
+            for topic, payload in self.published
+            if topic == f"R/{self.portal_id}/keepalive"
+        ]
+
+    @property
+    def other_publishes(self) -> list[tuple[str, bytes]]:
+        """Everything published that is not a keepalive."""
+        return [
+            (topic, payload)
+            for topic, payload in self.published
+            if topic != f"R/{self.portal_id}/keepalive"
+        ]
+
+    @property
+    def subscribed_filters(self) -> list[str]:
+        """The topic filters held by the connected clients."""
+        return [f for client in self.clients for f in client.subscriptions]
+
+    def set(self, path: str, value: Any) -> None:
+        """Change a value; subscribers receive it."""
+        self.topics[path] = json.dumps({"value": value})
+        self._deliver(path)
+
+    def charge(
+        self,
+        level: float | None = None,
+        power: float | None = None,
+        voltage: float | None = None,
+        current_limit: float | None = None,
+    ) -> None:
+        """Set the battery values that are given."""
+        for path, value in (
+            ("system/0/Dc/Battery/Soc", level),
+            ("system/0/Dc/Battery/Power", power),
+            ("system/0/Dc/Battery/Voltage", voltage),
+            ("battery/512/Info/MaxChargeCurrent", current_limit),
+        ):
+            if value is not None:
+                self.set(path, value)
+
+    def drop(self) -> None:
+        """The GX goes away: all clients lose the connection and cannot return."""
+        self.down = True
+        for client in self.clients:
+            if client.connected:
+                client.connected = False
+                client.subscriptions.clear()
+                client.on_disconnect()
+
+    def restore(self) -> None:
+        """The GX is back: clients reconnect by themselves."""
+        self.down = False
+        for client in list(self.clients):
+            if not client.connected:
+                self.connect(client)
+
+    def connect(self, client: FakeTransport) -> None:
+        """Accept a client."""
+        client.connected = True
+        client.on_connect()
+
+    def subscribed(self, client: FakeTransport, topic_filter: str) -> None:
+        """Send the retained serial to a client that asks for it."""
+        serial = f"N/{self.portal_id}/system/0/Serial"
+        if _topic_matches(topic_filter, serial):
+            client.on_message(serial, self._payload("system/0/Serial"))
+
+    def received(self, client: FakeTransport, topic: str, payload: bytes) -> None:
+        """Take a message; an empty keepalive makes the GX republish everything."""
+        self.published.append((topic, payload))
+        if topic == f"R/{self.portal_id}/keepalive" and payload == b"":
+            for path in list(self.topics):
+                self._deliver(path, only=client)
+
+    def _payload(self, path: str) -> bytes:
+        return self.topics[path].encode()
+
+    def _deliver(self, path: str, only: FakeTransport | None = None) -> None:
+        topic = f"N/{self.portal_id}/{path}"
+        for client in list(self.clients):
+            if (only is not None and client is not only) or not client.connected:
+                continue
+            if any(_topic_matches(f, topic) for f in client.subscriptions):
+                client.on_message(topic, self._payload(path))
+
+
+GX_HOSTS: dict[tuple[str, int], SimGx] = {}
+
+
+def register_gx(gx: SimGx) -> SimGx:
+    """Put a GX on the simulated network at its host and port."""
+    GX_HOSTS[(gx.host, gx.port)] = gx
+    return gx
+
+
+@pytest.fixture(autouse=True)
+def gx_network() -> Iterator[dict[tuple[str, int], SimGx]]:
+    """No test reaches a real broker: the MQTT client is replaced at its boundary."""
+    GX_HOSTS.clear()
+    with patch(
+        "custom_components.nulleinspeisung.battery_gateway.create_transport",
+        side_effect=lambda: FakeTransport(GX_HOSTS),
+    ):
+        yield GX_HOSTS
+    GX_HOSTS.clear()
+
+
 @dataclass
 class SimHouse:
     """A House as stored in its config subentry."""
@@ -648,6 +851,9 @@ class SimHouse:
     battery_backed: list[str] = field(default_factory=list)
     unique_id: str | None = None
     tibber_home: str | None = None
+    gx: SimGx | None = None
+    """The House's AC Battery; ``None`` for a House without one."""
+    capacity: float | None = None
 
     def subentry_data(self) -> dict[str, Any]:
         """The subentry as ``MockConfigEntry`` takes it."""
@@ -660,6 +866,16 @@ class SimHouse:
                 CONF_INVERTERS: self.inverters,
                 CONF_BATTERY_BACKED: self.battery_backed,
                 **({CONF_TIBBER_HOME: self.tibber_home} if self.tibber_home else {}),
+                **(
+                    {
+                        CONF_GX_HOST: self.gx.host,
+                        CONF_GX_PORT: self.gx.port,
+                        CONF_GX_PORTAL_ID: self.gx.portal_id,
+                    }
+                    if self.gx
+                    else {}
+                ),
+                **({CONF_BATTERY_CAPACITY: self.capacity} if self.capacity else {}),
             },
             "unique_id": self.unique_id or f"house-{self.name.casefold()}",
             "title": self.name,
@@ -687,6 +903,9 @@ async def setup_entry(
     dtu_network.after_apply.append(open_meteo.register)
     for dtu in dtus:
         dtu_network.add(dtu)
+    for house in houses or []:
+        if house.gx is not None:
+            register_gx(house.gx)
     if tibber is not None:
         dtu_network.after_apply.append(tibber.register)
     dtu_network.apply()
