@@ -47,3 +47,10 @@ SIGN_EXPORT = "export"
 """The Grid Meter reports positive values for export."""
 
 HOUSE_MODEL = "House"
+
+CONF_TIBBER_TOKEN = "tibber_token"
+CONF_TIBBER_HOME = "tibber_home"
+
+TIBBER_URL = "https://api.tibber.com/v1-beta/gql"
+TIBBER_REQUEST_TIMEOUT = 15
+"""Seconds before a request to Tibber is given up."""

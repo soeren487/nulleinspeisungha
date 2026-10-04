@@ -47,6 +47,8 @@ from .const import (
     CONF_RESTART_WAIT,
     CONF_STALENESS_TIME,
     CONF_SUN_ANGLE,
+    CONF_TIBBER_HOME,
+    CONF_TIBBER_TOKEN,
     CONF_URL,
     DEFAULT_RESTART_WAIT,
     DEFAULT_STALENESS_TIME,
@@ -65,6 +67,12 @@ from .dtu_client import (
 )
 from .dtu_models import DtuIdentity
 from .house import house_subentries, inverters_of_other_houses, known_inverters
+from .price_source import (
+    TibberAuthError,
+    TibberConnectionError,
+    TibberHome,
+    async_create_client,
+)
 
 DTU_SCHEMA = vol.Schema(
     {
@@ -111,6 +119,9 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_NOTIFY_TARGET): EntitySelector(
             EntitySelectorConfig(domain="notify")
         ),
+        vol.Optional(CONF_TIBBER_TOKEN): TextSelector(
+            TextSelectorConfig(type=TextSelectorType.PASSWORD)
+        ),
     }
 )
 
@@ -151,19 +162,35 @@ class NulleinspeisungConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class NulleinspeisungOptionsFlow(OptionsFlow):
-    """Options of the integration: the optional notification target."""
+    """Options of the integration: notification target and Tibber token."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Ask for the notification target."""
+        """Ask for the notification target and the Tibber token."""
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
+            data = {k: v for k, v in user_input.items() if v not in (None, "")}
+            token = str(data.get(CONF_TIBBER_TOKEN, "")).strip()
+            if token:
+                data[CONF_TIBBER_TOKEN] = token
+                try:
+                    client = await async_create_client(self.hass, token)
+                    await client.async_homes()
+                except TibberAuthError:
+                    errors[CONF_TIBBER_TOKEN] = "invalid_token"
+                except TibberConnectionError:
+                    errors["base"] = "cannot_connect"
+            else:
+                data.pop(CONF_TIBBER_TOKEN, None)
+            if not errors:
+                return self.async_create_entry(data=data)
         return self.async_show_form(
             step_id="init",
             data_schema=self.add_suggested_values_to_schema(
-                OPTIONS_SCHEMA, self.config_entry.options
+                OPTIONS_SCHEMA, user_input or self.config_entry.options
             ),
+            errors=errors,
         )
 
 
@@ -272,6 +299,10 @@ def _inverter_selector(options: dict[str, str]) -> SelectSelector:
     )
 
 
+NO_TIBBER_HOME = "none"
+"""Choice meaning that the House has no Tibber home."""
+
+
 class HouseSubentryFlow(ConfigSubentryFlow):
     """Add a House, or change everything about it later.
 
@@ -284,6 +315,8 @@ class HouseSubentryFlow(ConfigSubentryFlow):
         super().__init__()
         self._collected: dict[str, Any] = {}
         self._title = ""
+        self._homes: list[TibberHome] | None = None
+        self._homes_fetched = False
 
     @property
     def _is_reconfigure(self) -> bool:
@@ -304,6 +337,19 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             else None
         )
 
+    async def _async_tibber_homes(self) -> list[TibberHome] | None:
+        """The account's Tibber homes; ``None`` without a token or when unreachable."""
+        if not self._homes_fetched:
+            self._homes_fetched = True
+            token = self._get_entry().options.get(CONF_TIBBER_TOKEN)
+            if token:
+                try:
+                    client = await async_create_client(self.hass, token)
+                    self._homes = await client.async_homes()
+                except TibberAuthError, TibberConnectionError:
+                    self._homes = None
+        return self._homes
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
@@ -321,6 +367,7 @@ class HouseSubentryFlow(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Step one: the House itself."""
         errors: dict[str, str] = {}
+        homes = await self._async_tibber_homes()
         if user_input is not None:
             name = str(user_input[CONF_NAME]).strip()
             others = {
@@ -332,6 +379,10 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                 errors[CONF_NAME] = "name_required"
             elif name.casefold() in others:
                 errors[CONF_NAME] = "name_exists"
+            elif (
+                chosen_home := self._chosen_home(user_input, homes)
+            ) and chosen_home in self._homes_of_other_houses():
+                errors[CONF_TIBBER_HOME] = "tibber_home_assigned"
             else:
                 self._title = name
                 self._collected = {
@@ -340,6 +391,8 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                     CONF_GRID_METER: user_input[CONF_GRID_METER],
                     CONF_GRID_METER_SIGN: user_input[CONF_GRID_METER_SIGN],
                 }
+                if chosen_home:
+                    self._collected[CONF_TIBBER_HOME] = chosen_home
                 return await self.async_step_inverters()
 
         current = self._current()
@@ -353,6 +406,7 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             },
             CONF_GRID_METER: current.get(CONF_GRID_METER),
             CONF_GRID_METER_SIGN: current.get(CONF_GRID_METER_SIGN, SIGN_IMPORT),
+            CONF_TIBBER_HOME: current.get(CONF_TIBBER_HOME) or NO_TIBBER_HOME,
         }
         schema: dict[Any, Any] = {
             vol.Required(CONF_NAME, default=values[CONF_NAME]): TextSelector(),
@@ -379,9 +433,47 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                 )
             ),
         }
+        if homes is not None:
+            schema[vol.Optional(CONF_TIBBER_HOME, default=values[CONF_TIBBER_HOME])] = (
+                SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(value=NO_TIBBER_HOME, label="None"),
+                            *(
+                                SelectOptionDict(value=home.id, label=home.nickname)
+                                for home in homes
+                            ),
+                        ],
+                        translation_key="tibber_home",
+                        mode=SelectSelectorMode.DROPDOWN,
+                    )
+                )
+            )
         return self.async_show_form(
             step_id=step_id, data_schema=vol.Schema(schema), errors=errors
         )
+
+    def _chosen_home(
+        self, user_input: dict[str, Any], homes: list[TibberHome] | None
+    ) -> str | None:
+        """The Tibber home to store: the owner's choice, else the stored one.
+
+        Without the select (no token, or Tibber unreachable) the House keeps
+        the home it has.
+        """
+        if homes is None:
+            return self._current().get(CONF_TIBBER_HOME) or None
+        chosen = user_input.get(CONF_TIBBER_HOME, NO_TIBBER_HOME)
+        return None if chosen == NO_TIBBER_HOME else chosen
+
+    def _homes_of_other_houses(self) -> set[str]:
+        """Tibber homes used by any House except the one being edited."""
+        return {
+            home
+            for subentry in house_subentries(self._get_entry())
+            if subentry.subentry_id != self._own_id()
+            if (home := subentry.data.get(CONF_TIBBER_HOME))
+        }
 
     def _offered(self) -> dict[str, str]:
         """Inverters this House may take, serial to label.

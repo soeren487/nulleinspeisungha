@@ -9,12 +9,14 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_PASSWORD, CONF_URL, SUBENTRY_TYPE_DTU
+from .const import CONF_PASSWORD, CONF_TIBBER_TOKEN, CONF_URL, SUBENTRY_TYPE_DTU
 from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
 from .dtu_client import DtuClient
 from .house import House, HouseConfig, house_subentries
 from .house_knowledge import HouseKnowledge
+from .house_prices import HousePrices
+from .price_source import async_create_client
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -61,12 +63,20 @@ async def async_setup_entry(
         synchroniser()
         entry.async_on_unload(coordinator.async_add_listener(synchroniser))
         coordinators[subentry_id] = coordinator
-    houses = {
-        subentry.subentry_id: House(
-            hass, HouseConfig.from_subentry(subentry), coordinators
-        )
-        for subentry in house_subentries(entry)
-    }
+    token = entry.options.get(CONF_TIBBER_TOKEN)
+    tibber = await async_create_client(hass, token) if token else None
+    houses: dict[str, House] = {}
+    for subentry in house_subentries(entry):
+        config = HouseConfig.from_subentry(subentry)
+        prices = None
+        if tibber is not None and config.tibber_home:
+            prices = HousePrices(
+                hass, entry, tibber, config.tibber_home, config.name, config.unique_id
+            )
+            # Tibber being down must not stop the entry from loading.
+            await prices.async_start()
+            entry.async_on_unload(prices.stop)
+        houses[subentry.subentry_id] = House(hass, config, coordinators, prices)
     entry.runtime_data = NulleinspeisungData(dtus=coordinators, houses=houses)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))

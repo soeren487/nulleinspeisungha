@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 import json
-from collections.abc import Iterator
+import re
+from collections import deque
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -27,11 +30,14 @@ from custom_components.nulleinspeisung.const import (
     CONF_LATITUDE,
     CONF_LONGITUDE,
     CONF_PASSWORD,
+    CONF_TIBBER_HOME,
+    CONF_TIBBER_TOKEN,
     CONF_URL,
     DOMAIN,
     SIGN_IMPORT,
     SUBENTRY_TYPE_DTU,
     SUBENTRY_TYPE_HOUSE,
+    TIBBER_URL,
 )
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "opendtu"
@@ -165,6 +171,8 @@ class DtuNetwork:
         self.aioclient_mock = aioclient_mock
         self.dtus: dict[str, SimDtu] = {}
         self._post_log: dict[str, list[tuple[str, Any, Any]]] = {}
+        self.after_apply: list[Callable[[], None]] = []
+        """Called after every ``apply``, which clears all registered mocks."""
 
     def add(self, dtu: SimDtu) -> None:
         """Add a DTU to the network."""
@@ -174,6 +182,8 @@ class DtuNetwork:
         """Register all current DTU state with the mock client."""
         self._keep_posts()
         self.aioclient_mock.clear_requests()
+        for hook in self.after_apply:
+            hook()
 
         for dtu in self.dtus.values():
             base_url = dtu.base_url.rstrip("/")
@@ -393,6 +403,141 @@ def dtu_network(aioclient_mock: MagicMock) -> DtuNetwork:
     return DtuNetwork(aioclient_mock)
 
 
+TIBBER_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "tibber"
+TIBBER_TOKEN = "test-token-not-real"
+HOME_1 = "00000000-0000-4000-8000-000000000001"
+HOME_2 = "00000000-0000-4000-8000-000000000002"
+
+
+def load_tibber_fixture(filename: str) -> dict[str, Any]:
+    """Load a recorded Tibber answer."""
+    with open(TIBBER_FIXTURE_DIR / filename) as f:
+        return json.load(f)
+
+
+def recorded_price_info() -> dict[str, list[dict[str, Any]]]:
+    """The recorded ``priceInfo``: ``today`` and ``tomorrow``, 96 items each."""
+    data = load_tibber_fixture("prices.json")
+    return data["data"]["viewer"]["home"]["currentSubscription"]["priceInfo"]
+
+
+class PollDelay:
+    """The random delay of polls for tomorrow's prices; tests choose it."""
+
+    def __init__(self) -> None:
+        """Start without any delay."""
+        self.queue: deque[float] = deque()
+        """Seconds to hand out, one per poll; after that ``default``."""
+        self.default = 0.0
+
+    def __call__(self) -> timedelta:
+        """The delay for one poll."""
+        return timedelta(seconds=self.queue.popleft() if self.queue else self.default)
+
+
+@pytest.fixture(autouse=True)
+def poll_delay() -> Iterator[PollDelay]:
+    """Control the random delay at the single place the integration draws it."""
+    delay = PollDelay()
+    with patch("custom_components.nulleinspeisung.house_prices.poll_delay", delay):
+        yield delay
+
+
+class SimTibber:
+    """Simulated Tibber API at the HTTP boundary, answering with recorded data."""
+
+    def __init__(self, aioclient_mock: MagicMock) -> None:
+        """Register the API with the mock client; it answers from its state."""
+        info = recorded_price_info()
+        self.token = TIBBER_TOKEN
+        self.today: list[dict[str, Any]] = info["today"]
+        self.tomorrow: list[dict[str, Any]] = info["tomorrow"]
+        self.published = True
+        """Whether ``tomorrow`` is part of the answers."""
+        self.homes: list[dict[str, Any]] = load_tibber_fixture("homes.json")["data"][
+            "viewer"
+        ]["homes"]
+        self.down = False
+        self.http_status = 200
+        self.malformed = False
+        self.requests: list[tuple[str, dict[str, str]]] = []
+        """Every request received: the query and the headers."""
+        self._mock = aioclient_mock
+        self.register()
+
+    def register(self) -> None:
+        """(Re-)register the API; the DTU network's ``apply`` forgets it."""
+        self._mock.post(TIBBER_URL, side_effect=self._answer)
+
+    @property
+    def price_requests(self) -> list[str]:
+        """The queries for prices, in order."""
+        return [q for q, _ in self.requests if "priceInfo" in q]
+
+    @property
+    def home_requests(self) -> list[str]:
+        """The queries for the account's homes, in order."""
+        return [q for q, _ in self.requests if "homes" in q]
+
+    async def _answer(
+        self, method: str, url: Any, data: Any
+    ) -> AiohttpClientMockResponse:
+        # The mock has just logged this request; its headers are not handed on.
+        headers = dict(self._mock.mock_calls[-1][3])
+        self.requests.append((data["query"], headers))
+        if self.down:
+            return AiohttpClientMockResponse(method, url, exc=ClientError())
+        if self.http_status != 200:
+            return AiohttpClientMockResponse(method, url, status=self.http_status)
+        if self.malformed:
+            return AiohttpClientMockResponse(
+                method, url, json={"data": {"viewer": {"nothing": True}}}
+            )
+        if headers.get("Authorization") != f"Bearer {self.token}":
+            return AiohttpClientMockResponse(
+                method, url, json=load_tibber_fixture("unauthorized.json")
+            )
+        query = data["query"]
+        if "priceInfo" not in query:
+            return AiohttpClientMockResponse(
+                method, url, json={"data": {"viewer": {"homes": self.homes}}}
+            )
+        match = re.search(r'home\(id: "([^"]*)"\)', query)
+        if match is None or match.group(1) not in {h["id"] for h in self.homes}:
+            return AiohttpClientMockResponse(
+                method,
+                url,
+                json={
+                    "errors": [
+                        {
+                            "message": "home not found",
+                            "extensions": {"code": "HOME_NOT_FOUND"},
+                        }
+                    ],
+                    "data": {"viewer": {"home": None}},
+                },
+            )
+        info = {
+            "today": copy.deepcopy(self.today),
+            "tomorrow": copy.deepcopy(self.tomorrow) if self.published else [],
+        }
+        return AiohttpClientMockResponse(
+            method,
+            url,
+            json={
+                "data": {
+                    "viewer": {"home": {"currentSubscription": {"priceInfo": info}}}
+                }
+            },
+        )
+
+
+@pytest.fixture
+def tibber(aioclient_mock: MagicMock) -> SimTibber:
+    """Provide a simulated Tibber API."""
+    return SimTibber(aioclient_mock)
+
+
 @dataclass
 class SimHouse:
     """A House as stored in its config subentry."""
@@ -403,6 +548,7 @@ class SimHouse:
     inverters: list[str] = field(default_factory=list)
     battery_backed: list[str] = field(default_factory=list)
     unique_id: str | None = None
+    tibber_home: str | None = None
 
     def subentry_data(self) -> dict[str, Any]:
         """The subentry as ``MockConfigEntry`` takes it."""
@@ -414,6 +560,7 @@ class SimHouse:
                 CONF_GRID_METER_SIGN: self.sign,
                 CONF_INVERTERS: self.inverters,
                 CONF_BATTERY_BACKED: self.battery_backed,
+                **({CONF_TIBBER_HOME: self.tibber_home} if self.tibber_home else {}),
             },
             "unique_id": self.unique_id or f"house-{self.name.casefold()}",
             "title": self.name,
@@ -428,18 +575,25 @@ async def setup_entry(
     settings: dict[str, Any] | None = None,
     options: dict[str, Any] | None = None,
     houses: list[SimHouse] | None = None,
+    tibber: SimTibber | None = None,
 ) -> MockConfigEntry:
     """Put the DTUs on the simulated network and set up an entry with them.
 
-    ``houses`` are added as House subentries after the DTUs.
+    ``houses`` are added as House subentries after the DTUs. With ``tibber`` the
+    entry holds that API's token.
     """
     for dtu in dtus:
         dtu_network.add(dtu)
+    if tibber is not None:
+        dtu_network.after_apply.append(tibber.register)
     dtu_network.apply()
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={},
-        options=options or {},
+        options={
+            **({CONF_TIBBER_TOKEN: tibber.token} if tibber else {}),
+            **(options or {}),
+        },
         subentries_data=[
             {
                 "data": {
