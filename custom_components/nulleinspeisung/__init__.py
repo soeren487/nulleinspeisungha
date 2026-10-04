@@ -108,6 +108,8 @@ async def async_setup_entry(
             # Open-Meteo being down must not stop the entry from loading.
             await forecast.async_start()
             entry.async_on_unload(forecast.async_stop)
+        await house.expected_load.async_start()
+        entry.async_on_unload(house.expected_load.async_stop)
     entry.runtime_data = NulleinspeisungData(dtus=coordinators, houses=houses)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))

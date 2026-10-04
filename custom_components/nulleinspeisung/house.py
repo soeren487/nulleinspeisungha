@@ -38,6 +38,7 @@ from .const import (
 )
 from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
+from .expected_load import ExpectedLoad
 from .house_control import HouseControl
 from .house_prices import HousePrices
 
@@ -176,6 +177,12 @@ class House:
         """
         if forecast is not None:
             forecast.attach(self)
+        self.expected_load = ExpectedLoad(hass, self)
+        """The House's Expected Load; every House has one.
+
+        Later features read ``expected_load.at(start)`` and
+        ``expected_load.upcoming()`` from here.
+        """
 
     @property
     def battery(self) -> BatteryState | None:

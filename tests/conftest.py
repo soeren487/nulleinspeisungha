@@ -641,6 +641,24 @@ def seed_history(
     }
 
 
+def seed_load_history(
+    hass_storage: dict[str, Any],
+    house_unique_id: str,
+    records: list[tuple[datetime, float]],
+) -> None:
+    """Put consumption records into the storage of a House before it is set up.
+
+    Each record is (start of the quarter-hour, mean consumption in W).
+    """
+    key = f"{DOMAIN}.load_history_{house_unique_id}"
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": key,
+        "data": {"records": [[int(start.timestamp()), w] for start, w in records]},
+    }
+
+
 VICTRON_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "victron"
 
 

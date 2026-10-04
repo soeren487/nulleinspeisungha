@@ -68,6 +68,7 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda house: [
+            ExpectedLoadLearnedSensor(house),
             *([ForecastUsableSensor(house)] if house.forecast else []),
             *([BatteryConnectedSensor(house)] if house.gateway else []),
         ],
@@ -155,3 +156,25 @@ class BatteryConnectedSensor(HouseEntity, BinarySensorEntity):
         """Whether the GX is connected and its values are fresh."""
         state = self.house.battery
         return state is not None and state.fresh
+
+
+class ExpectedLoadLearnedSensor(HouseEntity, BinarySensorEntity):
+    """Whether the House's Expected Load is learned from a week of history."""
+
+    _attr_translation_key = "expected_load_learned"
+
+    def __init__(self, house: House) -> None:
+        """Create the binary sensor."""
+        super().__init__(house, "expected_load_learned")
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the history changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.house.expected_load.async_add_listener(self._handle_change)
+        )
+
+    @property
+    def is_on(self) -> bool:
+        """Whether enough days of history exist."""
+        return self.house.expected_load.learned
