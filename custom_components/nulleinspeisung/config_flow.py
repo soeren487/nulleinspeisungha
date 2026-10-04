@@ -10,17 +10,35 @@ from homeassistant.config_entries import (
     ConfigFlow,
     ConfigFlowResult,
     ConfigSubentryFlow,
+    OptionsFlow,
     SubentryFlowResult,
 )
 from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
-from .const import CONF_PASSWORD, CONF_URL, DOMAIN, SUBENTRY_TYPE_DTU
+from .const import (
+    CONF_NOTIFY_TARGET,
+    CONF_PASSWORD,
+    CONF_RESTART_WAIT,
+    CONF_STALENESS_TIME,
+    CONF_SUN_ANGLE,
+    CONF_URL,
+    DEFAULT_RESTART_WAIT,
+    DEFAULT_STALENESS_TIME,
+    DEFAULT_SUN_ANGLE,
+    DOMAIN,
+    SUBENTRY_TYPE_DTU,
+)
 from .dtu_client import (
     DtuAuthError,
     DtuClient,
@@ -37,6 +55,43 @@ DTU_SCHEMA = vol.Schema(
         vol.Required(CONF_PASSWORD): TextSelector(
             TextSelectorConfig(type=TextSelectorType.PASSWORD)
         ),
+        vol.Optional(CONF_SUN_ANGLE, default=DEFAULT_SUN_ANGLE): NumberSelector(
+            NumberSelectorConfig(
+                min=-10,
+                max=45,
+                step=0.5,
+                unit_of_measurement="°",
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(
+            CONF_STALENESS_TIME, default=DEFAULT_STALENESS_TIME
+        ): NumberSelector(
+            NumberSelectorConfig(
+                min=30,
+                max=3600,
+                step=1,
+                unit_of_measurement="s",
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+        vol.Optional(CONF_RESTART_WAIT, default=DEFAULT_RESTART_WAIT): NumberSelector(
+            NumberSelectorConfig(
+                min=60,
+                max=3600,
+                step=1,
+                unit_of_measurement="s",
+                mode=NumberSelectorMode.BOX,
+            )
+        ),
+    }
+)
+
+OPTIONS_SCHEMA = vol.Schema(
+    {
+        vol.Optional(CONF_NOTIFY_TARGET): EntitySelector(
+            EntitySelectorConfig(domain="notify")
+        ),
     }
 )
 
@@ -49,6 +104,12 @@ class NulleinspeisungConfigFlow(ConfigFlow, domain=DOMAIN):
     """
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """The owner can choose where repair issues are also sent."""
+        return NulleinspeisungOptionsFlow()
 
     @classmethod
     @callback
@@ -65,6 +126,23 @@ class NulleinspeisungConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             return self.async_create_entry(title="Nulleinspeisung", data={})
         return self.async_show_form(step_id="user")
+
+
+class NulleinspeisungOptionsFlow(OptionsFlow):
+    """Options of the integration: the optional notification target."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for the notification target."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=self.add_suggested_values_to_schema(
+                OPTIONS_SCHEMA, self.config_entry.options
+            ),
+        )
 
 
 class DtuSubentryFlow(ConfigSubentryFlow):
@@ -114,7 +192,13 @@ class DtuSubentryFlow(ConfigSubentryFlow):
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                DTU_SCHEMA, user_input or {CONF_URL: subentry.data[CONF_URL]}
+                DTU_SCHEMA,
+                user_input
+                or {
+                    key: value
+                    for key, value in subentry.data.items()
+                    if key != CONF_PASSWORD
+                },
             ),
             errors=errors,
         )
@@ -137,9 +221,16 @@ class DtuSubentryFlow(ConfigSubentryFlow):
         return None
 
     @staticmethod
-    def _data(user_input: dict[str, Any]) -> dict[str, str]:
+    def _data(user_input: dict[str, Any]) -> dict[str, Any]:
         """What is stored for the DTU."""
         return {
             CONF_URL: normalize_base_url(user_input[CONF_URL]),
             CONF_PASSWORD: user_input[CONF_PASSWORD],
+            CONF_SUN_ANGLE: float(user_input.get(CONF_SUN_ANGLE, DEFAULT_SUN_ANGLE)),
+            CONF_STALENESS_TIME: float(
+                user_input.get(CONF_STALENESS_TIME, DEFAULT_STALENESS_TIME)
+            ),
+            CONF_RESTART_WAIT: float(
+                user_input.get(CONF_RESTART_WAIT, DEFAULT_RESTART_WAIT)
+            ),
         }

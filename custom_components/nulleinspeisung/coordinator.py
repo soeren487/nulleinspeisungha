@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import DOMAIN, DTU_UPDATE_INTERVAL
 from .dtu_client import DtuClient, DtuConnectionError
 from .dtu_models import DtuSnapshot
+from .supervisor import DtuSupervisor
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
         )
         self.subentry = subentry
         self.client = client
+        self.supervisor = DtuSupervisor(hass, entry, subentry, client)
 
     @property
     def dtu_serial(self) -> str:
@@ -45,6 +47,9 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
     async def _async_update_data(self) -> DtuSnapshot:
         """Fetch a fresh snapshot."""
         try:
-            return await self.client.async_fetch_snapshot()
+            snapshot = await self.client.async_fetch_snapshot()
         except DtuConnectionError as err:
+            self.supervisor.observe_silence()
             raise UpdateFailed(str(err)) from err
+        await self.supervisor.async_observe(snapshot)
+        return snapshot

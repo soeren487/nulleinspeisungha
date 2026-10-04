@@ -20,11 +20,17 @@
           "description": "Gib die Adresse und das Administrator-Passwort der OpenDTU ein.",
           "data": {
             "url": "Adresse",
-            "password": "Passwort"
+            "password": "Passwort",
+            "sun_angle": "Sonnenwinkel",
+            "staleness_time": "Veraltungszeit (Sekunden)",
+            "restart_wait": "Wartezeit nach Neustart (Sekunden)"
           },
           "data_description": {
             "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
-            "password": "Administrator-Passwort der DTU (Benutzer admin)"
+            "password": "Administrator-Passwort der DTU (Benutzer admin)",
+            "sun_angle": "Sonnenhöhe in Grad, ab der die Wechselrichter Daten liefern müssen (Standard 5)",
+            "staleness_time": "Sekunden ohne frische Wechselrichter-Daten, nach denen die DTU als hängend gilt (Standard 120)",
+            "restart_wait": "Wartezeit nach einem Neustart in Sekunden, bevor die DTU erneut beurteilt wird; mindestens Veraltungszeit plus 30 Sekunden (Standard 180)"
           }
         },
         "reconfigure": {
@@ -32,11 +38,17 @@
           "description": "Ändere die Adresse oder das Administrator-Passwort dieser DTU.",
           "data": {
             "url": "Adresse",
-            "password": "Passwort"
+            "password": "Passwort",
+            "sun_angle": "Sonnenwinkel",
+            "staleness_time": "Veraltungszeit (Sekunden)",
+            "restart_wait": "Wartezeit nach Neustart (Sekunden)"
           },
           "data_description": {
             "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
-            "password": "Administrator-Passwort der DTU (Benutzer admin)"
+            "password": "Administrator-Passwort der DTU (Benutzer admin)",
+            "sun_angle": "Sonnenhöhe in Grad, ab der die Wechselrichter Daten liefern müssen (Standard 5)",
+            "staleness_time": "Sekunden ohne frische Wechselrichter-Daten, nach denen die DTU als hängend gilt (Standard 120)",
+            "restart_wait": "Wartezeit nach einem Neustart in Sekunden, bevor die DTU erneut beurteilt wird; mindestens Veraltungszeit plus 30 Sekunden (Standard 180)"
           }
         }
       },
@@ -58,6 +70,9 @@
       },
       "producing": {
         "name": "Produziert"
+      },
+      "stuck": {
+        "name": "Hängt"
       }
     },
     "sensor": {
@@ -72,7 +87,47 @@
       },
       "rated_power": {
         "name": "Nennleistung"
+      },
+      "restart_count": {
+        "name": "Neustarts"
+      },
+      "last_restart": {
+        "name": "Letzter Neustart"
       }
+    },
+    "button": {
+      "restart": {
+        "name": "Neustart"
+      }
+    },
+    "switch": {
+      "automatic_restart": {
+        "name": "Automatischer Neustart"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Benachrichtigungen",
+        "description": "Wähle, wohin Reparaturhinweise zusätzlich gesendet werden. Leer lassen, um sie nur in Home Assistant zu sehen.",
+        "data": {
+          "notify_target": "Benachrichtigungsziel"
+        },
+        "data_description": {
+          "notify_target": "Eine Notify-Entität, die eine Nachricht erhält, wenn ein Reparaturhinweis entsteht"
+        }
+      }
+    }
+  },
+  "issues": {
+    "dtu_unreachable": {
+      "title": "DTU {dtu} nicht erreichbar",
+      "description": "Die DTU {dtu} antwortet im Netzwerk nicht und kann deshalb nicht neu gestartet werden. Prüfe Stromversorgung und Netzwerkverbindung."
+    },
+    "restart_not_helping": {
+      "title": "Neustart der DTU {dtu} hilft nicht",
+      "description": "Die DTU {dtu} liefert nach mehreren Neustarts weiterhin keine Daten ihrer Wechselrichter. Sie wird jetzt seltener neu gestartet. Prüfe Schnee, eine Funkstörung oder einen Hardwaredefekt."
     }
   }
 }

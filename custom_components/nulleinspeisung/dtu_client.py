@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -40,7 +41,7 @@ def normalize_base_url(address: str) -> str:
 
 
 class DtuClient:
-    """Reads one DTU. Never writes."""
+    """Reads one DTU and can restart it. It writes nothing else."""
 
     def __init__(
         self, session: aiohttp.ClientSession, base_url: str, password: str
@@ -108,6 +109,13 @@ class DtuClient:
         except (KeyError, TypeError, ValueError, AttributeError) as err:
             raise DtuConnectionError("Unexpected answer from DTU") from err
 
+    async def async_restart(self) -> None:
+        """Restart the DTU.
+
+        Raises DtuConnectionError or DtuAuthError.
+        """
+        await self._post("/api/maintenance/reboot", {"reboot": True})
+
     async def _async_read_power(self, serial: str) -> float | None:
         """Sum the AC power over all channels of one Inverter.
 
@@ -151,3 +159,19 @@ class DtuClient:
         if not isinstance(data, dict):
             raise DtuConnectionError("Unexpected answer from DTU")
         return data
+
+    async def _post(self, path: str, payload: dict[str, Any]) -> None:
+        """POST a command as OpenDTU expects it: JSON in a form field ``data``."""
+        try:
+            async with self._session.post(
+                f"{self.base_url}{path}",
+                data={"data": json.dumps(payload)},
+                headers=self._auth_headers,
+                timeout=aiohttp.ClientTimeout(total=DTU_REQUEST_TIMEOUT),
+            ) as response:
+                if response.status == HTTPStatus.UNAUTHORIZED:
+                    raise DtuAuthError("Wrong administrator password")
+                if response.status != HTTPStatus.OK:
+                    raise DtuConnectionError(f"DTU answered HTTP {response.status}")
+        except (aiohttp.ClientError, TimeoutError) as err:
+            raise DtuConnectionError(f"Cannot reach DTU: {err}") from err

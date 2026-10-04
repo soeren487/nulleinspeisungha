@@ -16,7 +16,12 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
-from .entity import InverterEntity, setup_inverter_entities
+from .entity import (
+    DtuEntity,
+    InverterEntity,
+    setup_dtu_entities,
+    setup_inverter_entities,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,6 +60,7 @@ async def async_setup_entry(
             for description in DESCRIPTIONS
         ],
     )
+    setup_dtu_entities(entry, async_add_entities, lambda c: [DtuStuckSensor(c)])
 
 
 class InverterBinarySensor(InverterEntity, BinarySensorEntity):
@@ -76,3 +82,19 @@ class InverterBinarySensor(InverterEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Whether the property holds."""
         return self.entity_description.value_fn(self.inverter)
+
+
+class DtuStuckSensor(DtuEntity, BinarySensorEntity):
+    """Whether the DTU is a Stuck DTU right now."""
+
+    _attr_translation_key = "stuck"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+
+    def __init__(self, coordinator: DtuCoordinator) -> None:
+        """Create the stuck indicator."""
+        super().__init__(coordinator, "stuck")
+
+    @property
+    def is_on(self) -> bool | None:
+        """Whether the DTU is stuck; unknown while it does not answer."""
+        return self.coordinator.supervisor.stuck
