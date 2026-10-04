@@ -4,7 +4,7 @@ title: Requirements decisions
 description: All decisions settled in the requirements interview of 2026-10-04, and the facts still to be verified.
 tags: [project, requirements]
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T22:50:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-05T09:10:00Z }
 sources:
   - id: interview
     resource: requirements interview with Soeren, 2026-10-04
@@ -76,7 +76,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 
 No decisions are open. These facts still have to be established on the real system:
 
-- Whether Home Assistant's MQTT integration uses the external broker and whether the GX topics are bridged to it in both directions (decides the Victron access path).
+- Victron access path. Established on 2026-10-05 by listening on the external broker: the GX devices' own MQTT topics are not bridged to it. It carries the virtual grid meter's feed and a set of custom read-only battery topics (charge level, battery voltage and current), but no Victron settings. Reading or writing the setpoint override, the discharge limit or the Dynamic ESS mode therefore needs a direct connection to each GX's built-in broker, or stays out of reach. Open: whether those brokers are enabled and reachable. Details are in the private installation inventory.
 - Whether Victron's setpoint override expires when it is no longer refreshed, and what ESS does when the grid value freezes (decides override versus offset).
 - The time from a limit command's acknowledgement to changed inverter output.
 - The sign of each house's grid meter sensor.

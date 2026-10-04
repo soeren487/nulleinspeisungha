@@ -12,6 +12,7 @@ llm-wiki/
   SCHEMA.md              this file
   raw/                   source documents as received; immutable, never edited
     assets/              images belonging to raw sources
+  private/               pages that must not be published; ignored by git, same page format
   wiki/                  the OKF bundle; written and maintained by the agent
     index.md             catalog of sections (carries okf_version)
     log.md               change history, newest first
@@ -22,6 +23,15 @@ llm-wiki/
 ```
 
 Sections other than `project/` are created when their first page is written. Each section has its own `index.md`.
+
+## Public and private
+
+The repository is public. `wiki/` and `raw/` are published with it; `private/` is not tracked.
+
+- Anything that identifies the owner's installation goes to `private/`: addresses, host names, serial numbers, account or home identifiers, MQTT topic names of his network, device names that reveal them.
+- Credentials (passwords, tokens, keys) are written nowhere: not in `wiki/`, not in `private/`, not in tests, not in memory.
+- Published pages may refer to a private page by name, without a link.
+- `private/` has its own `index.md`. It is not backed up by git.
 
 ## What belongs where
 

@@ -37,12 +37,11 @@ It also has to detect an OpenDTU that has stopped exchanging data with its inver
 Shared across both houses:[^initial-requirements]
 
 - 12 Hoymiles inverters, reached through 3 OpenDTU devices over their REST API. OpenDTUs are connected globally; each inverter is then assigned to a house.
-- 2 of the inverters sit behind DC batteries (four Anker Solix E1600) fed directly by the panels. They deliver power only once the batteries are full, or at night during the release window. Details are in the [Installation inventory](installation-inventory.md).
+- 2 of the inverters sit behind DC batteries (four Anker Solix E1600) fed directly by the panels. They deliver power only once the batteries are full, or at night during the release window. Installation details (addresses, serial numbers) are kept in the private part of the wiki, outside the repository.
 
 # State
 
 - Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`; each ticket file carries its status. Tickets 01 to 06 and 13 are done as of 2026-10-05: the integration installs, connects DTUs, restarts a stuck DTU, has Houses with a grid meter and assigned inverters, can curtail a House's inverters to the feed-in setpoint, and fetches Tibber quarter-hour prices per House. Soeren installed the state after ticket 05 on the production Home Assistant and added DTUs and Houses successfully. No limit has been sent to a real inverter yet. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
-- Remote `origin` is a self-hosted forge at `docker.lan.slcl.eu:2424` (`soeren/nulleinspeisungha`); its type is not identified.[^repo-state]
 
 # Related
 
