@@ -112,6 +112,8 @@ class SimDtu:
     fresh data. ``None``: the data ages are left as set."""
     rebooted_at: datetime | None = None
     reboots_seen: int = 0
+    uptime: int | None = None
+    """Seconds the DTU reports as its uptime; ``None`` keeps the recorded one."""
     inverters: list[SimInverter] = field(default_factory=list)
 
     @classmethod
@@ -384,6 +386,8 @@ class DtuNetwork:
         system = load_fixture("system_status.json")
         system["hostname"] = dtu.hostname
         system["git_hash"] = dtu.firmware
+        if dtu.uptime is not None:
+            system["uptime"] = dtu.uptime
         self.aioclient_mock.get(f"{base_url}/api/system/status", json=system)
 
     def _register_dtu_config(self, base_url: str, dtu: SimDtu) -> None:

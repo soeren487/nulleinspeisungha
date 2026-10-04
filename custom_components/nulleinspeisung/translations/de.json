@@ -191,7 +191,8 @@
           "lowering": "Senken",
           "raising": "Anheben",
           "no_grid_power": "Keine Netzleistung",
-          "no_inverter": "Kein Wechselrichter"
+          "no_inverter": "Kein Wechselrichter",
+          "failure": "Störung"
         }
       },
       "inverter_limit": {
@@ -240,6 +241,15 @@
       "limit_floor": {
         "name": "Untergrenze des Limits"
       }
+    },
+    "select": {
+      "on_failure": {
+        "name": "Bei Störung",
+        "state": {
+          "hold": "Letzte Grenzen halten",
+          "full": "Alle auf 100 % setzen"
+        }
+      }
     }
   },
   "options": {
@@ -278,6 +288,14 @@
     "tibber_token_rejected": {
       "title": "Tibber-Token abgelehnt",
       "description": "Tibber hat das Token abgelehnt, daher können keine Preise abgerufen werden. Gib in den Optionen der Integration ein gültiges Token ein."
+    },
+    "grid_meter_failure": {
+      "title": "Netzzähler von Haus {house} liefert keine Daten",
+      "description": "Der Netzzähler von {house} hat seit drei Aktualisierungsintervallen keinen Wert geliefert. Das Haus hält oder gibt seine Wechselrichter frei, wie unter \"Bei Störung\" gewählt, und regelt von selbst weiter, sobald der Netzzähler wieder Werte liefert."
+    },
+    "dtu_failure": {
+      "title": "Keine DTU von Haus {house} antwortet",
+      "description": "Keine der DTUs der Wechselrichter von {house} antwortet im Netzwerk, daher kann nichts geregelt werden. Das Haus hält oder gibt seine Wechselrichter frei, wie unter \"Bei Störung\" gewählt, und regelt von selbst weiter, sobald wieder eine DTU antwortet."
     }
   },
   "selector": {

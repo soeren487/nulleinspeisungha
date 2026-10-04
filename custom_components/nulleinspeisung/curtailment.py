@@ -20,6 +20,7 @@ class ControlState(StrEnum):
     RAISING = "raising"
     NO_GRID_POWER = "no_grid_power"
     NO_INVERTER = "no_inverter"
+    FAILURE = "failure"
 
 
 @dataclass(frozen=True, slots=True)

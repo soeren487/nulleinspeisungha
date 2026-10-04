@@ -39,6 +39,18 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
         self.subentry = subentry
         self.client = client
         self.supervisor = DtuSupervisor(hass, entry, subentry, client, knowledge)
+        self._uptime_drops = 0
+
+    @property
+    def restart_generation(self) -> int:
+        """Counts the restarts of the DTU; it changes whenever the DTU restarted.
+
+        A restart is seen when the reported uptime is lower than at the previous
+        refresh, or when the integration itself restarted the DTU. A DTU that
+        restarted reports 0 % for every Inverter, so what a House sent to it
+        must be sent again.
+        """
+        return self._uptime_drops + self.supervisor.restart_count
 
     @property
     def staleness_time(self) -> float:
@@ -58,5 +70,7 @@ class DtuCoordinator(DataUpdateCoordinator[DtuSnapshot]):
         except DtuConnectionError as err:
             self.supervisor.observe_silence()
             raise UpdateFailed(str(err)) from err
+        if self.data is not None and snapshot.uptime < self.data.uptime:
+            self._uptime_drops += 1
         await self.supervisor.async_observe(snapshot)
         return snapshot

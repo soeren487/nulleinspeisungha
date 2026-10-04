@@ -22,6 +22,7 @@ PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -76,7 +77,7 @@ async def async_setup_entry(
             # Tibber being down must not stop the entry from loading.
             await prices.async_start()
             entry.async_on_unload(prices.stop)
-        houses[subentry.subentry_id] = House(hass, config, coordinators, prices)
+        houses[subentry.subentry_id] = House(hass, config, coordinators, prices, entry)
     entry.runtime_data = NulleinspeisungData(dtus=coordinators, houses=houses)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))

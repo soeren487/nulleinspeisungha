@@ -401,7 +401,6 @@ async def test_unknown_grid_power_sends_nothing(
     await _home(hass, dtu_network, grid=None)
     await _curtail(hass)
     assert _state(hass, "sensor", "control_state") == "no_grid_power"
-    await _tick(hass, freezer)
     for bad in ("unavailable", "unknown"):
         _grid(hass, bad)
         await _tick(hass, freezer)

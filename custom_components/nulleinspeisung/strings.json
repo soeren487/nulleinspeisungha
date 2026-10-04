@@ -191,7 +191,8 @@
           "lowering": "Lowering",
           "raising": "Raising",
           "no_grid_power": "No Grid Power",
-          "no_inverter": "No Inverter"
+          "no_inverter": "No Inverter",
+          "failure": "Failure"
         }
       },
       "inverter_limit": {
@@ -240,6 +241,15 @@
       "limit_floor": {
         "name": "Limit floor"
       }
+    },
+    "select": {
+      "on_failure": {
+        "name": "On failure",
+        "state": {
+          "hold": "Hold last limits",
+          "full": "Set all to 100 %"
+        }
+      }
     }
   },
   "options": {
@@ -278,6 +288,14 @@
     "tibber_token_rejected": {
       "title": "Tibber token rejected",
       "description": "Tibber refused the token, so no prices can be fetched. Enter a valid token in the options of the integration."
+    },
+    "grid_meter_failure": {
+      "title": "Grid Meter of House {house} delivers no data",
+      "description": "The Grid Meter of {house} has not delivered a value for three Update Intervals. The House holds or releases its Inverters as chosen in \"On failure\" and resumes by itself once the Grid Meter delivers again."
+    },
+    "dtu_failure": {
+      "title": "No DTU of House {house} answers",
+      "description": "None of the DTUs of the Inverters of {house} answers on the network, so nothing can be controlled. The House holds or releases its Inverters as chosen in \"On failure\" and resumes by itself once a DTU answers again."
     }
   },
   "selector": {
