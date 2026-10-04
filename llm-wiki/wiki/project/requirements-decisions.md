@@ -4,7 +4,7 @@ title: Requirements decisions
 description: All decisions settled in the requirements interview of 2026-10-04, and the facts still to be verified.
 tags: [project, requirements]
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-05T09:10:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-05T11:30:00Z }
 sources:
   - id: interview
     resource: requirements interview with Soeren, 2026-10-04
@@ -58,7 +58,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 | MQTT broker | External to Home Assistant, reachable from it |
 | Delivery order | 1. DTUs, inverter assignment, stuck detection and restart. 2. Curtailment, reading the AC battery. 3. Reported grid power, grid charging, discharge block; Node-RED off. 4. PV forecast |
 | Negative feed-in setpoint | A safety margin against accidental export. The integration reads the Victron's grid setpoint and never curtails to more import than that; if the feed-in setpoint asks for more, it uses the Victron's value and raises a repair issue. It never writes the Victron's stored grid setpoint. A positive setpoint needs no alignment |
-| Victron access | Through Home Assistant's MQTT integration with the GX portal ID per house, if the external broker carries the GX topics in both directions; otherwise an own connection to each GX's built-in broker |
+| Victron access | An own MQTT connection to each GX's built-in broker; the owner enters the GX address per house and the portal id is discovered. The reported grid power goes through Home Assistant's MQTT integration to the external broker ([ADR 0002](../../../docs/adr/0002-direct-mqtt-connection-to-each-gx.md)) |
 | Testing | Automated tests against simulated DTUs, meters and GX devices. Only the production Home Assistant exists. Real system: reading at any time; writes only in sessions Soeren approves each time, starting with one inverter he names. The two Victron behaviour tests are done together with him before stage 3 is built |
 | Name and languages | Domain `nulleinspeisung`, displayed as "Nulleinspeisung", English and German texts |
 | Distribution | Development on the self-hosted forge; mirrored to a GitHub repository Soeren creates, added to HACS as a custom repository. Until then installed by copying into `custom_components` |
@@ -76,7 +76,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 
 No decisions are open. These facts still have to be established on the real system:
 
-- Victron access path. Established on 2026-10-05 by listening on the external broker: the GX devices' own MQTT topics are not bridged to it. It carries the virtual grid meter's feed and a set of custom read-only battery topics (charge level, battery voltage and current), but no Victron settings. Reading or writing the setpoint override, the discharge limit or the Dynamic ESS mode therefore needs a direct connection to each GX's built-in broker, or stays out of reach. Open: whether those brokers are enabled and reachable. Details are in the private installation inventory.
+- Victron access path: settled on 2026-10-05. The external broker carries only the virtual grid meter's feed and custom read-only battery topics. Each GX device's built-in broker is reachable on the network without a password and publishes everything the design needs, including volatile overrides for setpoint, maximum discharge power and maximum charge power. The integration therefore connects to each GX directly (see ADR 0002) and publishes the reported grid power through Home Assistant's MQTT integration to the external broker, where the grid meter driver reads it. Both systems have Dynamic ESS off and a stored grid setpoint of 0 W.
 - Whether Victron's setpoint override expires when it is no longer refreshed, and what ESS does when the grid value freezes (decides override versus offset).
 - The time from a limit command's acknowledgement to changed inverter output.
 - The sign of each house's grid meter sensor.
