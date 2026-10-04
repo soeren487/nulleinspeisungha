@@ -54,3 +54,7 @@ CONF_TIBBER_HOME = "tibber_home"
 TIBBER_URL = "https://api.tibber.com/v1-beta/gql"
 TIBBER_REQUEST_TIMEOUT = 15
 """Seconds before a request to Tibber is given up."""
+
+OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_REQUEST_TIMEOUT = 15
+"""Seconds before a request to Open-Meteo is given up."""

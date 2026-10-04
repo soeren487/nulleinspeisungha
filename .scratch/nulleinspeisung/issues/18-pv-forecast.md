@@ -4,10 +4,14 @@
 
 **Blocked by:** 06 (Curtail PV Inverters to the Feed-in Setpoint)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Irradiance for the House's location is fetched and refreshed several times a day
-- [ ] Production history is recorded per quarter-hour with a marker for curtailed intervals, and survives a restart
-- [ ] The PV Forecast for today and tomorrow is shown, together with whether it is usable
-- [ ] Curtailed intervals do not enter the learned conversion
-- [ ] Tests run against a simulated forecast service at the HTTP boundary; the learning is tested directly
+- [x] Irradiance for the House's location is fetched and refreshed several times a day
+- [x] Production history is recorded per quarter-hour with a marker for curtailed intervals, and survives a restart
+- [x] The PV Forecast for today and tomorrow is shown, together with whether it is usable
+- [x] Curtailed intervals do not enter the learned conversion
+- [x] Tests run against a simulated forecast service at the HTTP boundary; the learning is tested directly
+
+## Comments
+
+2026-10-05: Implemented on branch `ticket-18-pv-forecast`. 371 tests pass, linters clean. The client was run once against the real Open-Meteo service with generic coordinates. The forecast uses horizontal irradiance and one learned factor per UTC hour of day; it counts as usable once 14 days with at least 8 uncurtailed daylight quarter-hours each are recorded. Open: the history store of a removed House is not deleted.

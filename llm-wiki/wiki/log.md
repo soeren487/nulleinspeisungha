@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-05
+* **Update**: [Overview](project/overview.md): tickets 07 and 18 done; ticket 08 waits for the Victron access path.
 * **Update**: Moved the installation inventory out of the published wiki into `llm-wiki/private/`, which git ignores; removed host names from [Overview](project/overview.md).
 * **Update**: [Tibber prices](research/tibber-api-prices.md): query confirmed against the real API, error answers recorded. [Overview](project/overview.md): ticket 06 done, trial on production, repository public.
 

@@ -13,6 +13,8 @@ from .const import CONF_PASSWORD, CONF_TIBBER_TOKEN, CONF_URL, SUBENTRY_TYPE_DTU
 from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
 from .dtu_client import DtuClient
+from .forecast import HouseForecast
+from .forecast_source import async_create_client as async_create_forecast_client
 from .house import House, HouseConfig, house_subentries
 from .house_knowledge import HouseKnowledge
 from .house_prices import HousePrices
@@ -67,6 +69,7 @@ async def async_setup_entry(
     token = entry.options.get(CONF_TIBBER_TOKEN)
     tibber = await async_create_client(hass, token) if token else None
     houses: dict[str, House] = {}
+    forecast_client = None
     for subentry in house_subentries(entry):
         config = HouseConfig.from_subentry(subentry)
         prices = None
@@ -77,7 +80,25 @@ async def async_setup_entry(
             # Tibber being down must not stop the entry from loading.
             await prices.async_start()
             entry.async_on_unload(prices.stop)
-        houses[subentry.subentry_id] = House(hass, config, coordinators, prices, entry)
+        forecast = None
+        if config.pv_inverters:
+            if forecast_client is None:
+                forecast_client = await async_create_forecast_client(hass)
+            forecast = HouseForecast(
+                hass,
+                entry,
+                forecast_client,
+                config.name,
+                config.unique_id,
+                config.latitude,
+                config.longitude,
+            )
+        house = House(hass, config, coordinators, prices, entry, forecast)
+        houses[subentry.subentry_id] = house
+        if forecast is not None:
+            # Open-Meteo being down must not stop the entry from loading.
+            await forecast.async_start()
+            entry.async_on_unload(forecast.async_stop)
     entry.runtime_data = NulleinspeisungData(dtus=coordinators, houses=houses)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
