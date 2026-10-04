@@ -6,7 +6,11 @@
 
 **Status:** ready-for-human
 
-- [ ] Response time from acknowledgement to changed output is measured for an HM and for the HMS Inverter and recorded in the wiki
+- [ ] Response time from acknowledgement to changed output is measured for an HM and for the HMS Inverter and recorded in the wiki (HM-1200-4T done 2026-10-05; a panel-fed HM and the HMS are still open)
 - [ ] The Grid Meter sign of both Houses is verified and set correctly
 - [ ] The Garage DTU's Inverter assignment is recorded in the wiki
 - [ ] The default Update Interval is confirmed or changed in the spec
+
+## Comments
+
+2026-10-05: First session, at night, on one Battery-backed HM-1200-4T with the owner's approval. Result in the wiki research page on limit control: absolute non-persistent limits take effect within 6 to 10 s, a relative limit took about 155 s to lower, and the output ramps at about 0.5 % of rated power per second. Follow-ups: ticket 20 (send absolute limits) and ticket 21 (account for the ramp). Still open here: a panel-fed HM and the HMS by day, the Grid Meter signs, the Garage assignment, and the Update Interval default.

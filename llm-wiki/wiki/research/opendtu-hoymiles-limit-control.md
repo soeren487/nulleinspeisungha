@@ -7,6 +7,9 @@ status: draft
 generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T08:56:35Z }
 stale_after: 2027-04-04T00:00:00Z
 sources:
+  - id: own-measurement
+    resource: measurement on the owner's installation, 2026-10-05
+    title: Limit response measured on one HM-1200-4T
   - id: opendtu-src
     resource: https://github.com/tbnobody/OpenDTU/tree/8da432d52f33a7598deb93550df2115b8e5bb700
     title: tbnobody/OpenDTU source at 8da432d (tag v26.9.28), src/WebApi_*.cpp and lib/Hoymiles
@@ -278,6 +281,31 @@ After a reboot: wait at least 5 minutes before judging again (limit read-back ta
 
 Common ground: non-persistent limits only, exclusive control of the governed inverters, never command an unreachable inverter, and wait for the effect of one change before computing the next.
 
+
+# Measured on a real inverter
+
+Measured on 2026-10-05 at night on one HM-1200-4T (inverter firmware build 2020-06-24) behind a DC battery delivering a steady 290 W, through OpenDTU v26.3.30, by setting non-persistent limits and reading the AC power every 1.5 s. One inverter, one night: treat the numbers as indicative.[^own-measurement]
+
+| What | Result |
+| --- | --- |
+| Acknowledgement (`limit_set_status` from `Pending` to `Ok`) | 2 to 5 s after the POST |
+| Relative non-persistent limit (type 1), lowering 100 % to 10 % | No change in output for about 155 s, then a ramp down over about 30 s to the target. A first attempt watched for only 75 s saw no effect at all |
+| Relative non-persistent limit, raising to 100 % | Output started to rise within about 6 s |
+| Absolute non-persistent limit (type 0), lowering | Output started to fall 6 to 10 s after the POST |
+| Absolute non-persistent limit, raising | Output started to rise within about 7 s |
+| Ramp, both directions | About 6 W per second, which is 0.5 % of rated power per second: 430 W to 155 W took about 47 s |
+| Reported limit | After an absolute limit OpenDTU reports both forms, for example 99.6 W and 8.3 % |
+| Returning to full | Absolute limit equal to the rated power is reported as 100 % |
+
+Conclusions for the control loop:
+
+- **Use absolute non-persistent limits.** Lowering with a relative limit was delayed by minutes; with an absolute limit it started within seconds. The integration computes watts from its percent and the inverter's rated power.
+- **The output follows a ramp, not a step.** A change of several hundred watts on one inverter takes most of a minute. A loop that runs every 15 s and reacts to the full remaining deviation each time will overshoot unless it accounts for the change still in flight.
+- **Side effect behind a DC battery:** after the limit was released the inverter overshot to about 580 W for roughly two minutes before settling back to 295 W.
+
+Not measured: an HM-600 or HM-1500 fed by panels, and the HMS-1600 (different radio).
+
+
 [^opendtu-src]: tbnobody/OpenDTU source at 8da432d (tag v26.9.28)
 [^opendtu-docs]: OpenDTU documentation (opendtu.solar)
 [^opendtu-limit-type-change]: OpenDTU commit 8cab333, limit_type renumbered
@@ -298,3 +326,4 @@ Common ground: non-persistent limits only, exclusive control of the governed inv
 [^hzx-i211]: HoymilesZeroExport issue 211 (user reports)
 [^ahoy-manual]: AhoyDTU user manual
 [^forum-eeprom]: akkudoktor.net forum thread (anecdotal)
+[^own-measurement]: Limit response measured on one HM-1200-4T
