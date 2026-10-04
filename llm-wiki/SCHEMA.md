@@ -94,7 +94,7 @@ Ingest one source at a time and report the pages touched.
 
 ### Research filing (after web or codebase research)
 
-Write the finding to `research/<slug>.md` with its sources and a `stale_after` where it ages, update affected concept pages, index, log. A sub-agent doing research is given the relevant wiki pages as its starting context and returns findings in page format for the orchestrator to file.
+Write the finding to `research/<slug>.md` with its sources and a `stale_after` where it ages, update affected concept pages, index, log. A sub-agent doing research is given the relevant wiki pages as its starting context, writes its `research/` page itself and returns only a short summary; the orchestrator updates concept pages, index and log.
 
 ### Lint (on request)
 

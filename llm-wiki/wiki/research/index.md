@@ -1,0 +1,9 @@
+# Research
+
+* [Home Assistant app versus custom integration](home-assistant-app-vs-integration.md) - What the 2026 "add-on to app" rename means, and whether this project should be built as an app (container) or as a custom integration.
+* [OpenDTU and Hoymiles limit control](opendtu-hoymiles-limit-control.md) - How to read inverters and set power limits through OpenDTU's REST API, the timing and failure behaviour that constrain a zero feed-in loop, and how existing controllers do it.
+* [PV forecast sources and how schedulers use them for grid charging](pv-forecast-sources.md) - Forecast sources usable from a Home Assistant custom integration in Germany, their limits and licences, geometry-free calibration from production history, and the rule that turns PV and load forecasts into a grid charging amount.
+* [Shelly Pro 3EM - reading total grid power locally](shelly-pro-3em-measurement.md) - Local interfaces of the Shelly Pro 3EM for three-phase active power, their field names, sign, update behaviour, and which value a zero feed-in controller should use.
+* [Tibber price data - GraphQL API and the Home Assistant integration](tibber-api-prices.md) - How to get Tibber quarter-hour prices and price levels per home from the GraphQL API, and what the official Home Assistant Tibber integration exposes of them.
+* [Victron ESS - blocking discharge and charging from the grid over MQTT](victron-ess-charge-discharge-control.md) - MQTT-writable ESS settings on Venus OS 3.67 that stop battery discharge while charging continues, how to charge from the grid at a given power, persistence of each setting, and the conflict with Dynamic ESS.
+* [Victron grid meter over MQTT and ways to force a grid charge](victron-mqtt-grid-meter.md) - How a MultiPlus-II GX takes an external grid power value over MQTT, how ESS uses it, and the documented alternatives to offsetting the meter value for grid charging.
