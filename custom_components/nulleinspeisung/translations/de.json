@@ -1,0 +1,10 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nulleinspeisung",
+        "description": "Nulleinspeisung zu Home Assistant hinzufügen. DTUs und Häuser werden anschließend hinzugefügt."
+      }
+    }
+  }
+}
