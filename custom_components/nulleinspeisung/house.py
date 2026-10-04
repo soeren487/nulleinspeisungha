@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
@@ -32,6 +32,9 @@ from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
 from .house_control import HouseControl
 from .house_prices import HousePrices
+
+if TYPE_CHECKING:
+    from .forecast import HouseForecast
 
 _WATTS_PER_UNIT = {"W": 1.0, "kW": 1000.0, "MW": 1_000_000.0, "mW": 0.001}
 
@@ -130,6 +133,7 @@ class House:
         dtus: Mapping[str, DtuSource],
         prices: HousePrices | None = None,
         entry: ConfigEntry | None = None,
+        forecast: HouseForecast | None = None,
     ) -> None:
         """Create the House on top of the coordinators of the entry's DTUs."""
         self.hass = hass
@@ -143,6 +147,13 @@ class House:
         Later features read ``prices.current`` and ``prices.future`` from here.
         """
         self.control = HouseControl(self)
+        self.forecast = forecast
+        """The House's PV Forecast; ``None`` without PV Inverters.
+
+        Later features read ``forecast.future`` and ``forecast.usable`` from here.
+        """
+        if forecast is not None:
+            forecast.attach(self)
 
     @property
     def inverter_count(self) -> int:
@@ -193,6 +204,13 @@ class House:
     def production(self, serials: Iterable[str]) -> float | None:
         """Summed AC power of the given Inverters, ``None`` if none is known."""
         return sum_known(self.inverter_power(s) for s in serials)
+
+    def pv_production_complete(self) -> float | None:
+        """Production of the PV Inverters, only if every one of them is known."""
+        powers = [self.inverter_power(s) for s in self.config.pv_inverters]
+        if not powers or any(p is None for p in powers):
+            return None
+        return sum(p for p in powers if p is not None)
 
     def inverter_production(self) -> float | None:
         """Production of all assigned Inverters in W."""

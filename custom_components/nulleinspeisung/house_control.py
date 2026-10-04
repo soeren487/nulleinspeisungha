@@ -113,6 +113,18 @@ class HouseControl:
         for listener in list(self._listeners):
             listener()
 
+    @property
+    def curtailing(self) -> bool:
+        """Whether the House currently asks less than 100 % of any Inverter."""
+        if not self.curtailment:
+            return False
+        if self.requested_percent is not None and self.requested_percent < FULL_LIMIT:
+            return True
+        return any(
+            percent < FULL_LIMIT
+            for percent in (*self._sent.values(), *self._pending.values())
+        )
+
     # -- settings ----------------------------------------------------------
 
     @property

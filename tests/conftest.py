@@ -34,6 +34,7 @@ from custom_components.nulleinspeisung.const import (
     CONF_TIBBER_TOKEN,
     CONF_URL,
     DOMAIN,
+    OPEN_METEO_URL,
     SIGN_IMPORT,
     SUBENTRY_TYPE_DTU,
     SUBENTRY_TYPE_HOUSE,
@@ -542,6 +543,100 @@ def tibber(aioclient_mock: MagicMock) -> SimTibber:
     return SimTibber(aioclient_mock)
 
 
+OPEN_METEO_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "open_meteo"
+
+
+def load_open_meteo_fixture(filename: str) -> dict[str, Any]:
+    """Load a recorded Open-Meteo answer."""
+    with open(OPEN_METEO_FIXTURE_DIR / filename) as f:
+        return json.load(f)
+
+
+class SimOpenMeteo:
+    """Simulated Open-Meteo API at the HTTP boundary, answering with recorded data.
+
+    The recorded answer covers 2026-10-04 and 2026-10-05 in UTC, 96 quarter-hours
+    each, whatever location is asked for.
+    """
+
+    def __init__(self, aioclient_mock: MagicMock) -> None:
+        """Register the API with the mock client; it answers from its state."""
+        self.answer: dict[str, Any] = load_open_meteo_fixture("forecast.json")
+        self.down = False
+        self.http_status = 200
+        self.malformed = False
+        self.error = False
+        """Answer like the recorded HTTP 400 for invalid input."""
+        self.requests: list[tuple[dict[str, str], dict[str, str]]] = []
+        """Every request received: the query parameters and the headers."""
+        self._mock = aioclient_mock
+        self.register()
+
+    def register(self) -> None:
+        """(Re-)register the API; the DTU network's ``apply`` forgets it."""
+        self._mock.get(re.compile(re.escape(OPEN_METEO_URL)), side_effect=self._answer)
+
+    @property
+    def irradiance(self) -> list[float | None]:
+        """The shortwave radiation values that are served, in W/m²."""
+        return self.answer["minutely_15"]["shortwave_radiation"]
+
+    @property
+    def times(self) -> list[int]:
+        """The unix times of the served quarter-hours."""
+        return self.answer["minutely_15"]["time"]
+
+    def irradiance_at(self, moment: datetime) -> float | None:
+        """The served value of the quarter-hour starting at ``moment``."""
+        return self.irradiance[self.times.index(int(moment.timestamp()))]
+
+    async def _answer(
+        self, method: str, url: Any, data: Any
+    ) -> AiohttpClientMockResponse:
+        headers = dict(self._mock.mock_calls[-1][3] or {})
+        self.requests.append((dict(url.query), headers))
+        if self.down:
+            return AiohttpClientMockResponse(method, url, exc=ClientError())
+        if self.error:
+            return AiohttpClientMockResponse(
+                method, url, status=400, json=load_open_meteo_fixture("error.json")
+            )
+        if self.http_status != 200:
+            return AiohttpClientMockResponse(method, url, status=self.http_status)
+        if self.malformed:
+            return AiohttpClientMockResponse(method, url, json={"hourly": {}})
+        return AiohttpClientMockResponse(method, url, json=copy.deepcopy(self.answer))
+
+
+@pytest.fixture
+def open_meteo(aioclient_mock: MagicMock) -> SimOpenMeteo:
+    """Provide a simulated Open-Meteo API."""
+    return SimOpenMeteo(aioclient_mock)
+
+
+def seed_history(
+    hass_storage: dict[str, Any],
+    house_unique_id: str,
+    records: list[tuple[datetime, float, float | None, bool]],
+) -> None:
+    """Put production records into the storage of a House before it is set up.
+
+    Each record is (start, mean production in W, irradiance in W/m², curtailed).
+    """
+    key = f"{DOMAIN}.pv_history_{house_unique_id}"
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": key,
+        "data": {
+            "records": [
+                [int(start.timestamp()), production, irradiance, curtailed]
+                for start, production, irradiance, curtailed in records
+            ]
+        },
+    }
+
+
 @dataclass
 class SimHouse:
     """A House as stored in its config subentry."""
@@ -580,12 +675,16 @@ async def setup_entry(
     options: dict[str, Any] | None = None,
     houses: list[SimHouse] | None = None,
     tibber: SimTibber | None = None,
+    open_meteo: SimOpenMeteo | None = None,
 ) -> MockConfigEntry:
     """Put the DTUs on the simulated network and set up an entry with them.
 
     ``houses`` are added as House subentries after the DTUs. With ``tibber`` the
-    entry holds that API's token.
+    entry holds that API's token. Houses with PV Inverters ask Open-Meteo, which is
+    ``open_meteo`` or, without it, a simulator that answers with the recorded data.
     """
+    open_meteo = open_meteo or SimOpenMeteo(dtu_network.aioclient_mock)
+    dtu_network.after_apply.append(open_meteo.register)
     for dtu in dtus:
         dtu_network.add(dtu)
     if tibber is not None:

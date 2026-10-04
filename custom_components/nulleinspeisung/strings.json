@@ -147,6 +147,9 @@
       },
       "stuck": {
         "name": "Stuck"
+      },
+      "pv_forecast_usable": {
+        "name": "PV Forecast usable"
       }
     },
     "sensor": {
@@ -213,6 +216,18 @@
       },
       "prices_known_until": {
         "name": "Prices known until"
+      },
+      "pv_forecast_power": {
+        "name": "PV Forecast power"
+      },
+      "pv_forecast_today": {
+        "name": "PV Forecast today"
+      },
+      "pv_forecast_tomorrow": {
+        "name": "PV Forecast tomorrow"
+      },
+      "pv_forecast_history_days": {
+        "name": "PV Forecast history days"
       }
     },
     "button": {
@@ -296,6 +311,10 @@
     "dtu_failure": {
       "title": "No DTU of House {house} answers",
       "description": "None of the DTUs of the Inverters of {house} answers on the network, so nothing can be controlled. The House holds or releases its Inverters as chosen in \"On failure\" and resumes by itself once a DTU answers again."
+    },
+    "pv_forecast_unavailable": {
+      "title": "PV forecast for House {house} unavailable",
+      "description": "The irradiance forecast for {house} could not be fetched for more than 6 hours, so the PV Forecast is getting out of date. Check the internet connection of Home Assistant. The forecast is fetched again automatically."
     }
   },
   "selector": {

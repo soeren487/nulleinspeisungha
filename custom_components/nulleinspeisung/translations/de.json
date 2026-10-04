@@ -147,6 +147,9 @@
       },
       "stuck": {
         "name": "Hängt"
+      },
+      "pv_forecast_usable": {
+        "name": "PV-Prognose verwendbar"
       }
     },
     "sensor": {
@@ -213,6 +216,18 @@
       },
       "prices_known_until": {
         "name": "Preise bekannt bis"
+      },
+      "pv_forecast_power": {
+        "name": "PV-Prognose Leistung"
+      },
+      "pv_forecast_today": {
+        "name": "PV-Prognose heute"
+      },
+      "pv_forecast_tomorrow": {
+        "name": "PV-Prognose morgen"
+      },
+      "pv_forecast_history_days": {
+        "name": "PV-Prognose Verlaufstage"
       }
     },
     "button": {
@@ -296,6 +311,10 @@
     "dtu_failure": {
       "title": "Keine DTU von Haus {house} antwortet",
       "description": "Keine der DTUs der Wechselrichter von {house} antwortet im Netzwerk, daher kann nichts geregelt werden. Das Haus hält oder gibt seine Wechselrichter frei, wie unter \"Bei Störung\" gewählt, und regelt von selbst weiter, sobald wieder eine DTU antwortet."
+    },
+    "pv_forecast_unavailable": {
+      "title": "PV-Prognose für Haus {house} nicht verfügbar",
+      "description": "Die Einstrahlungsprognose für {house} konnte seit mehr als 6 Stunden nicht abgerufen werden, daher veraltet die PV-Prognose. Prüfe die Internetverbindung von Home Assistant. Die Prognose wird automatisch erneut abgerufen."
     }
   },
   "selector": {

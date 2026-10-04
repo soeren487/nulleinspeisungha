@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -14,10 +14,17 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.util import dt as dt_util
 
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
@@ -161,6 +168,16 @@ async def async_setup_entry(
                     PricesKnownUntilSensor(house),
                 ]
                 if house.prices is not None
+                else []
+            ),
+            *(
+                [
+                    ForecastPowerSensor(house),
+                    ForecastEnergySensor(house, "pv_forecast_today", 0),
+                    ForecastEnergySensor(house, "pv_forecast_tomorrow", 1),
+                    ForecastHistoryDaysSensor(house),
+                ]
+                if house.forecast is not None
                 else []
             ),
         ],
@@ -394,3 +411,75 @@ class PricesKnownUntilSensor(_PriceSensor):
     def native_value(self) -> datetime | None:
         """Where the known prices end."""
         return self.house.prices.known_until if self.house.prices else None
+
+
+class _ForecastSensor(HouseEntity, SensorEntity):
+    """A sensor that follows the House's PV Forecast."""
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the forecast or the history change."""
+        await super().async_added_to_hass()
+        assert self.house.forecast is not None
+        self.async_on_remove(
+            self.house.forecast.async_add_listener(self._handle_change)
+        )
+
+
+class ForecastPowerSensor(_ForecastSensor):
+    """The PV Forecast of the current quarter-hour."""
+
+    _attr_translation_key = "pv_forecast_power"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "pv_forecast_power")
+
+    @property
+    def native_value(self) -> float | None:
+        """Expected production in W; unknown without a learned factor."""
+        current = self.house.forecast.current if self.house.forecast else None
+        return round(current.watts, 1) if current else None
+
+
+class ForecastEnergySensor(_ForecastSensor):
+    """The PV Forecast summed over a local day."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, house: House, key: str, days_ahead: int) -> None:
+        """Create the sensor for today (0) or a later day."""
+        super().__init__(house, key)
+        self._attr_translation_key = key
+        self._days_ahead = days_ahead
+
+    @property
+    def native_value(self) -> float | None:
+        """Expected production of the day in kWh, unknown without a factor."""
+        if self.house.forecast is None:
+            return None
+        day = dt_util.now().date() + timedelta(days=self._days_ahead)
+        energy = self.house.forecast.energy_kwh(day)
+        return round(energy, 3) if energy is not None else None
+
+
+class ForecastHistoryDaysSensor(_ForecastSensor):
+    """How many days of history count towards the forecast being usable."""
+
+    _attr_translation_key = "pv_forecast_history_days"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_native_unit_of_measurement = UnitOfTime.DAYS
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "pv_forecast_history_days")
+
+    @property
+    def native_value(self) -> int | None:
+        """Days with enough usable records."""
+        return self.house.forecast.history_days if self.house.forecast else None
