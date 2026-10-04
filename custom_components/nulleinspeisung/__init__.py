@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -11,6 +13,7 @@ from .const import CONF_PASSWORD, CONF_URL, SUBENTRY_TYPE_DTU
 from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
 from .dtu_client import DtuClient
+from .house import House, HouseConfig, house_subentries
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -19,8 +22,18 @@ PLATFORMS: list[Platform] = [
     Platform.SWITCH,
 ]
 
-type NulleinspeisungConfigEntry = ConfigEntry[dict[str, DtuCoordinator]]
-"""Runtime data: the coordinator of every DTU, keyed by subentry id."""
+
+@dataclass
+class NulleinspeisungData:
+    """Runtime data of the entry."""
+
+    dtus: dict[str, DtuCoordinator] = field(default_factory=dict)
+    """The coordinator of every DTU, keyed by subentry id."""
+    houses: dict[str, House] = field(default_factory=dict)
+    """Every House, keyed by subentry id."""
+
+
+type NulleinspeisungConfigEntry = ConfigEntry[NulleinspeisungData]
 
 
 async def async_setup_entry(
@@ -43,7 +56,13 @@ async def async_setup_entry(
         synchroniser()
         entry.async_on_unload(coordinator.async_add_listener(synchroniser))
         coordinators[subentry_id] = coordinator
-    entry.runtime_data = coordinators
+    houses = {
+        subentry.subentry_id: House(
+            hass, HouseConfig.from_subentry(subentry), coordinators
+        )
+        for subentry in house_subentries(entry)
+    }
+    entry.runtime_data = NulleinspeisungData(dtus=coordinators, houses=houses)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_on_change))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -60,5 +79,5 @@ async def async_unload_entry(
 async def _async_reload_on_change(
     hass: HomeAssistant, entry: NulleinspeisungConfigEntry
 ) -> None:
-    """Reload when a DTU is added, changed or removed."""
+    """Reload when a DTU or House is added, changed or removed."""
     hass.config_entries.async_schedule_reload(entry.entry_id)

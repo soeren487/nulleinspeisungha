@@ -61,6 +61,75 @@
         "wrong_dtu": "Die Adresse gehört zu einer anderen DTU.",
         "reconfigure_successful": "Die DTU wurde aktualisiert."
       }
+    },
+    "house": {
+      "entry_type": "Haus",
+      "initiate_flow": {
+        "user": "Haus hinzufügen",
+        "reconfigure": "Haus neu konfigurieren"
+      },
+      "step": {
+        "user": {
+          "title": "Haus hinzufügen",
+          "description": "Gib dem Haus einen Namen, seinen Standort und den Sensor seines Netzzählers.",
+          "data": {
+            "name": "Name",
+            "location": "Standort",
+            "grid_meter": "Netzzähler",
+            "grid_meter_sign": "Vorzeichen des Netzzählers"
+          },
+          "data_description": {
+            "name": "Name des Hauses, eindeutig unter den Häusern",
+            "location": "Wo das Haus steht",
+            "grid_meter": "Leistungssensor, der die Netto-Leistung am Netzanschluss misst",
+            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet"
+          }
+        },
+        "reconfigure": {
+          "title": "Haus neu konfigurieren",
+          "description": "Gib dem Haus einen Namen, seinen Standort und den Sensor seines Netzzählers.",
+          "data": {
+            "name": "Name",
+            "location": "Standort",
+            "grid_meter": "Netzzähler",
+            "grid_meter_sign": "Vorzeichen des Netzzählers"
+          },
+          "data_description": {
+            "name": "Name des Hauses, eindeutig unter den Häusern",
+            "location": "Wo das Haus steht",
+            "grid_meter": "Leistungssensor, der die Netto-Leistung am Netzanschluss misst",
+            "grid_meter_sign": "Ob der Sensor Bezug oder Einspeisung als positive Werte meldet"
+          }
+        },
+        "inverters": {
+          "title": "Wechselrichter",
+          "description": "Wähle die Wechselrichter, die zu diesem Haus gehören. Ein Wechselrichter gehört zu höchstens einem Haus. Du kannst das leer lassen und später Wechselrichter hinzufügen.",
+          "data": {
+            "inverters": "Wechselrichter"
+          },
+          "data_description": {
+            "inverters": "Wechselrichter beliebiger DTUs, die keinem anderen Haus zugeordnet sind"
+          }
+        },
+        "battery_backed": {
+          "title": "Batteriegestützte Wechselrichter",
+          "description": "Markiere die Wechselrichter, die von einer DC-Batterie gespeist werden. Alle anderen gewählten Wechselrichter sind PV-Wechselrichter.",
+          "data": {
+            "battery_backed": "Batteriegestützte Wechselrichter"
+          },
+          "data_description": {
+            "battery_backed": "Wechselrichter, deren Eingang eine DC-Batterie ist"
+          }
+        }
+      },
+      "error": {
+        "name_exists": "Ein Haus mit diesem Namen gibt es bereits.",
+        "name_required": "Gib einen Namen ein.",
+        "inverter_assigned": "Ein gewählter Wechselrichter gehört bereits zu einem anderen Haus."
+      },
+      "abort": {
+        "reconfigure_successful": "Das Haus wurde aktualisiert."
+      }
     }
   },
   "entity": {
@@ -93,6 +162,21 @@
       },
       "last_restart": {
         "name": "Letzter Neustart"
+      },
+      "grid_power": {
+        "name": "Netzleistung"
+      },
+      "inverter_production": {
+        "name": "Erzeugung der Wechselrichter"
+      },
+      "pv_production": {
+        "name": "Erzeugung der PV-Wechselrichter"
+      },
+      "battery_backed_production": {
+        "name": "Erzeugung der batteriegestützten Wechselrichter"
+      },
+      "inverter_count": {
+        "name": "Zugeordnete Wechselrichter"
       }
     },
     "button": {
@@ -128,6 +212,14 @@
     "restart_not_helping": {
       "title": "Neustart der DTU {dtu} hilft nicht",
       "description": "Die DTU {dtu} liefert nach mehreren Neustarts weiterhin keine Daten ihrer Wechselrichter. Sie wird jetzt seltener neu gestartet. Prüfe Schnee, eine Funkstörung oder einen Hardwaredefekt."
+    }
+  },
+  "selector": {
+    "grid_meter_sign": {
+      "options": {
+        "import": "Positive Werte sind Bezug",
+        "export": "Positive Werte sind Einspeisung"
+      }
     }
   }
 }

@@ -5,14 +5,16 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, HOUSE_MODEL
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
+from .house import House
 
 
 def dtu_device_info(coordinator: DtuCoordinator) -> DeviceInfo:
@@ -66,7 +68,7 @@ def setup_inverter_entities(
     build: Callable[[DtuCoordinator, str], list[Entity]],
 ) -> None:
     """Add entities for every Inverter of every DTU, including later arrivals."""
-    for subentry_id, coordinator in entry.runtime_data.items():
+    for subentry_id, coordinator in entry.runtime_data.dtus.items():
         known: set[str] = set()
 
         def add_new(
@@ -103,7 +105,7 @@ def setup_dtu_entities(
     build: Callable[[DtuCoordinator], list[Entity]],
 ) -> None:
     """Add the entities of every DTU as soon as its device exists."""
-    for subentry_id, coordinator in entry.runtime_data.items():
+    for subentry_id, coordinator in entry.runtime_data.dtus.items():
         added = False
 
         def add_once(
@@ -118,3 +120,36 @@ def setup_dtu_entities(
 
         add_once()
         entry.async_on_unload(coordinator.async_add_listener(add_once))
+
+
+class HouseEntity(Entity):
+    """An entity of a House, shown on the House's device."""
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+
+    def __init__(self, house: House, key: str) -> None:
+        """Create the entity ``key`` of this House."""
+        self.house = house
+        self._attr_unique_id = f"{house.config.unique_id}_{key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, house.config.unique_id)},
+            name=house.config.name,
+            manufacturer="Nulleinspeisung",
+            model=HOUSE_MODEL,
+        )
+
+    @callback
+    def _handle_change(self, *_: object) -> None:
+        """Write the new state after an input of the House changed."""
+        self.async_write_ha_state()
+
+
+def setup_house_entities(
+    entry: ConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+    build: Callable[[House], list[Entity]],
+) -> None:
+    """Add the entities of every House to the House's subentry."""
+    for subentry_id, house in entry.runtime_data.houses.items():
+        async_add_entities(build(house), config_subentry_id=subentry_id)

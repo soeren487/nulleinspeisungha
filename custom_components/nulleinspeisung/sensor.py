@@ -17,16 +17,20 @@ from homeassistant.components.sensor import (
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.helpers.event import async_track_state_change_event
 
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
 from .entity import (
     DtuEntity,
+    HouseEntity,
     InverterEntity,
     setup_dtu_entities,
+    setup_house_entities,
     setup_inverter_entities,
 )
+from .house import House
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -70,6 +74,58 @@ DESCRIPTIONS: tuple[InverterSensorDescription, ...] = (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class HouseSensorDescription(SensorEntityDescription):
+    """Describes a sensor computed by a House."""
+
+    value_fn: Callable[[House], float | int | None]
+    follows_grid_meter: bool = False
+    """Update on the Grid Meter's state changes instead of on DTU updates."""
+    always_available: bool = False
+
+
+_POWER = {
+    "device_class": SensorDeviceClass.POWER,
+    "state_class": SensorStateClass.MEASUREMENT,
+    "native_unit_of_measurement": UnitOfPower.WATT,
+}
+
+HOUSE_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
+    HouseSensorDescription(
+        key="grid_power",
+        translation_key="grid_power",
+        value_fn=lambda house: house.grid_power(),
+        follows_grid_meter=True,
+        **_POWER,
+    ),
+    HouseSensorDescription(
+        key="inverter_production",
+        translation_key="inverter_production",
+        value_fn=lambda house: house.inverter_production(),
+        **_POWER,
+    ),
+    HouseSensorDescription(
+        key="pv_production",
+        translation_key="pv_production",
+        value_fn=lambda house: house.pv_production(),
+        **_POWER,
+    ),
+    HouseSensorDescription(
+        key="battery_backed_production",
+        translation_key="battery_backed_production",
+        value_fn=lambda house: house.battery_backed_production(),
+        **_POWER,
+    ),
+    HouseSensorDescription(
+        key="inverter_count",
+        translation_key="inverter_count",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda house: house.inverter_count,
+        always_available=True,
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NulleinspeisungConfigEntry,
@@ -88,6 +144,13 @@ async def async_setup_entry(
         entry,
         async_add_entities,
         lambda c: [DtuRestartCountSensor(c), DtuLastRestartSensor(c)],
+    )
+    setup_house_entities(
+        entry,
+        async_add_entities,
+        lambda house: [
+            HouseSensor(house, description) for description in HOUSE_DESCRIPTIONS
+        ],
     )
 
 
@@ -169,3 +232,40 @@ class DtuLastRestartSensor(DtuEntity, RestoreSensor):
     def native_value(self) -> datetime | None:
         """When the last restart was sent."""
         return self.coordinator.supervisor.last_restart
+
+
+class HouseSensor(HouseEntity, SensorEntity):
+    """A value computed from the Grid Meter and the Inverters of a House."""
+
+    entity_description: HouseSensorDescription
+
+    def __init__(self, house: House, description: HouseSensorDescription) -> None:
+        """Create the sensor."""
+        super().__init__(house, description.key)
+        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        """Follow the Grid Meter or the DTUs, whichever the value depends on."""
+        await super().async_added_to_hass()
+        description = self.entity_description
+        if description.follows_grid_meter:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self.house.config.grid_meter], self._handle_change
+                )
+            )
+        elif not description.always_available:
+            for coordinator in self.house.dtus.values():
+                self.async_on_remove(
+                    coordinator.async_add_listener(self._handle_change)
+                )
+
+    @property
+    def native_value(self) -> float | int | None:
+        """The current value."""
+        return self.entity_description.value_fn(self.house)
+
+    @property
+    def available(self) -> bool:
+        """Whether the value is known."""
+        return self.entity_description.always_available or self.native_value is not None

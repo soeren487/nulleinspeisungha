@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import voluptuous as vol
 from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
@@ -18,15 +20,28 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     EntitySelector,
     EntitySelectorConfig,
+    LocationSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
     TextSelector,
     TextSelectorConfig,
     TextSelectorType,
 )
 
 from .const import (
+    CONF_BATTERY_BACKED,
+    CONF_GRID_METER,
+    CONF_GRID_METER_SIGN,
+    CONF_INVERTERS,
+    CONF_LATITUDE,
+    CONF_LOCATION,
+    CONF_LONGITUDE,
+    CONF_NAME,
     CONF_NOTIFY_TARGET,
     CONF_PASSWORD,
     CONF_RESTART_WAIT,
@@ -37,7 +52,10 @@ from .const import (
     DEFAULT_STALENESS_TIME,
     DEFAULT_SUN_ANGLE,
     DOMAIN,
+    SIGN_EXPORT,
+    SIGN_IMPORT,
     SUBENTRY_TYPE_DTU,
+    SUBENTRY_TYPE_HOUSE,
 )
 from .dtu_client import (
     DtuAuthError,
@@ -46,6 +64,7 @@ from .dtu_client import (
     normalize_base_url,
 )
 from .dtu_models import DtuIdentity
+from .house import house_subentries, inverters_of_other_houses, known_inverters
 
 DTU_SCHEMA = vol.Schema(
     {
@@ -116,8 +135,11 @@ class NulleinspeisungConfigFlow(ConfigFlow, domain=DOMAIN):
     def async_get_supported_subentry_types(
         cls, config_entry: ConfigEntry
     ) -> dict[str, type[ConfigSubentryFlow]]:
-        """A DTU is added as a subentry of the config entry."""
-        return {SUBENTRY_TYPE_DTU: DtuSubentryFlow}
+        """DTUs and Houses are added as subentries of the config entry."""
+        return {
+            SUBENTRY_TYPE_DTU: DtuSubentryFlow,
+            SUBENTRY_TYPE_HOUSE: HouseSubentryFlow,
+        }
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -234,3 +256,215 @@ class DtuSubentryFlow(ConfigSubentryFlow):
                 user_input.get(CONF_RESTART_WAIT, DEFAULT_RESTART_WAIT)
             ),
         }
+
+
+def _inverter_selector(options: dict[str, str]) -> SelectSelector:
+    """A multi-select over Inverters, labelled for the owner."""
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[
+                SelectOptionDict(value=serial, label=label)
+                for serial, label in options.items()
+            ],
+            multiple=True,
+            mode=SelectSelectorMode.LIST,
+        )
+    )
+
+
+class HouseSubentryFlow(ConfigSubentryFlow):
+    """Add a House, or change everything about it later.
+
+    Three steps: the House itself, its Inverters, and which of those are
+    Battery-backed (skipped when there are none).
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing collected."""
+        super().__init__()
+        self._collected: dict[str, Any] = {}
+        self._title = ""
+
+    @property
+    def _is_reconfigure(self) -> bool:
+        """Whether an existing House is being changed."""
+        return self.source == SOURCE_RECONFIGURE
+
+    def _current(self) -> dict[str, Any]:
+        """The stored data of the House being reconfigured, else nothing."""
+        return (
+            dict(self._get_reconfigure_subentry().data) if self._is_reconfigure else {}
+        )
+
+    def _own_id(self) -> str | None:
+        """Subentry id of the House being reconfigured."""
+        return (
+            self._get_reconfigure_subentry().subentry_id
+            if self._is_reconfigure
+            else None
+        )
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Ask for name, location and Grid Meter of a new House."""
+        return await self._async_step_house("user", user_input)
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Change name, location and Grid Meter of an existing House."""
+        return await self._async_step_house("reconfigure", user_input)
+
+    async def _async_step_house(
+        self, step_id: str, user_input: dict[str, Any] | None
+    ) -> SubentryFlowResult:
+        """Step one: the House itself."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            name = str(user_input[CONF_NAME]).strip()
+            others = {
+                s.title.casefold()
+                for s in house_subentries(self._get_entry())
+                if s.subentry_id != self._own_id()
+            }
+            if not name:
+                errors[CONF_NAME] = "name_required"
+            elif name.casefold() in others:
+                errors[CONF_NAME] = "name_exists"
+            else:
+                self._title = name
+                self._collected = {
+                    CONF_LATITUDE: float(user_input[CONF_LOCATION][CONF_LATITUDE]),
+                    CONF_LONGITUDE: float(user_input[CONF_LOCATION][CONF_LONGITUDE]),
+                    CONF_GRID_METER: user_input[CONF_GRID_METER],
+                    CONF_GRID_METER_SIGN: user_input[CONF_GRID_METER_SIGN],
+                }
+                return await self.async_step_inverters()
+
+        current = self._current()
+        values = user_input or {
+            CONF_NAME: self._get_reconfigure_subentry().title
+            if self._is_reconfigure
+            else "",
+            CONF_LOCATION: {
+                CONF_LATITUDE: current.get(CONF_LATITUDE, self.hass.config.latitude),
+                CONF_LONGITUDE: current.get(CONF_LONGITUDE, self.hass.config.longitude),
+            },
+            CONF_GRID_METER: current.get(CONF_GRID_METER),
+            CONF_GRID_METER_SIGN: current.get(CONF_GRID_METER_SIGN, SIGN_IMPORT),
+        }
+        schema: dict[Any, Any] = {
+            vol.Required(CONF_NAME, default=values[CONF_NAME]): TextSelector(),
+            vol.Required(CONF_LOCATION, default=values[CONF_LOCATION]): (
+                LocationSelector()
+            ),
+            vol.Required(
+                CONF_GRID_METER,
+                **(
+                    {"default": values[CONF_GRID_METER]}
+                    if values[CONF_GRID_METER]
+                    else {}
+                ),
+            ): EntitySelector(
+                EntitySelectorConfig(domain="sensor", device_class="power")
+            ),
+            vol.Required(
+                CONF_GRID_METER_SIGN, default=values[CONF_GRID_METER_SIGN]
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[SIGN_IMPORT, SIGN_EXPORT],
+                    translation_key="grid_meter_sign",
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
+            ),
+        }
+        return self.async_show_form(
+            step_id=step_id, data_schema=vol.Schema(schema), errors=errors
+        )
+
+    def _offered(self) -> dict[str, str]:
+        """Inverters this House may take, serial to label.
+
+        Every Inverter any DTU knows, without those of other Houses, plus the
+        ones already assigned here even when their DTU is currently unknown.
+        """
+        taken = inverters_of_other_houses(self._get_entry(), self._own_id())
+        known = known_inverters(self.hass, self._get_entry())
+        offered = {s: label for s, label in known.items() if s not in taken}
+        for serial in self._current().get(CONF_INVERTERS, ()):
+            offered.setdefault(serial, serial)
+        return offered
+
+    async def async_step_inverters(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Step two: which Inverters belong to the House."""
+        errors: dict[str, str] = {}
+        offered = self._offered()
+        if user_input is not None:
+            chosen = list(dict.fromkeys(user_input[CONF_INVERTERS]))
+            taken = inverters_of_other_houses(self._get_entry(), self._own_id())
+            if taken.intersection(chosen):
+                errors["base"] = "inverter_assigned"
+            else:
+                self._collected[CONF_INVERTERS] = chosen
+                if not chosen:
+                    self._collected[CONF_BATTERY_BACKED] = []
+                    return self._async_finish()
+                return await self.async_step_battery_backed()
+        default = (
+            user_input[CONF_INVERTERS]
+            if user_input
+            else self._current().get(CONF_INVERTERS, [])
+        )
+        return self.async_show_form(
+            step_id="inverters",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_INVERTERS,
+                        default=[s for s in default if s in offered],
+                    ): _inverter_selector(offered)
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_battery_backed(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Step three: which of the chosen Inverters are Battery-backed."""
+        chosen = self._collected[CONF_INVERTERS]
+        known = known_inverters(self.hass, self._get_entry())
+        options = {serial: known.get(serial, serial) for serial in chosen}
+        if user_input is not None:
+            self._collected[CONF_BATTERY_BACKED] = [
+                s for s in chosen if s in user_input[CONF_BATTERY_BACKED]
+            ]
+            return self._async_finish()
+        previous = self._current().get(CONF_BATTERY_BACKED, [])
+        return self.async_show_form(
+            step_id="battery_backed",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_BATTERY_BACKED,
+                        default=[s for s in previous if s in options],
+                    ): _inverter_selector(options)
+                }
+            ),
+        )
+
+    def _async_finish(self) -> SubentryFlowResult:
+        """Store the House."""
+        if self._is_reconfigure:
+            return self.async_update_and_abort(
+                self._get_entry(),
+                self._get_reconfigure_subentry(),
+                title=self._title,
+                data=self._collected,
+            )
+        return self.async_create_entry(
+            title=self._title, data=self._collected, unique_id=uuid4().hex
+        )

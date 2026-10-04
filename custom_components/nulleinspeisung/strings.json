@@ -61,6 +61,75 @@
         "wrong_dtu": "The address belongs to a different DTU.",
         "reconfigure_successful": "The DTU was updated."
       }
+    },
+    "house": {
+      "entry_type": "House",
+      "initiate_flow": {
+        "user": "Add House",
+        "reconfigure": "Reconfigure House"
+      },
+      "step": {
+        "user": {
+          "title": "Add House",
+          "description": "Give the House a name, its location and the sensor of its Grid Meter.",
+          "data": {
+            "name": "Name",
+            "location": "Location",
+            "grid_meter": "Grid Meter",
+            "grid_meter_sign": "Grid Meter sign"
+          },
+          "data_description": {
+            "name": "Name of the House, unique among Houses",
+            "location": "Where the House is",
+            "grid_meter": "Power sensor measuring the net power at the grid connection",
+            "grid_meter_sign": "Whether the sensor reports import or export as positive values"
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure House",
+          "description": "Give the House a name, its location and the sensor of its Grid Meter.",
+          "data": {
+            "name": "Name",
+            "location": "Location",
+            "grid_meter": "Grid Meter",
+            "grid_meter_sign": "Grid Meter sign"
+          },
+          "data_description": {
+            "name": "Name of the House, unique among Houses",
+            "location": "Where the House is",
+            "grid_meter": "Power sensor measuring the net power at the grid connection",
+            "grid_meter_sign": "Whether the sensor reports import or export as positive values"
+          }
+        },
+        "inverters": {
+          "title": "Inverters",
+          "description": "Choose the Inverters that belong to this House. An Inverter belongs to at most one House. You can leave this empty and add Inverters later.",
+          "data": {
+            "inverters": "Inverters"
+          },
+          "data_description": {
+            "inverters": "Inverters of any DTU that are not assigned to another House"
+          }
+        },
+        "battery_backed": {
+          "title": "Battery-backed Inverters",
+          "description": "Mark the Inverters that are fed by a DC Battery. All other chosen Inverters are PV Inverters.",
+          "data": {
+            "battery_backed": "Battery-backed Inverters"
+          },
+          "data_description": {
+            "battery_backed": "Inverters whose input is a DC Battery"
+          }
+        }
+      },
+      "error": {
+        "name_exists": "A House with this name already exists.",
+        "name_required": "Enter a name.",
+        "inverter_assigned": "An Inverter you chose already belongs to another House."
+      },
+      "abort": {
+        "reconfigure_successful": "The House was updated."
+      }
     }
   },
   "entity": {
@@ -93,6 +162,21 @@
       },
       "last_restart": {
         "name": "Last restart"
+      },
+      "grid_power": {
+        "name": "Grid Power"
+      },
+      "inverter_production": {
+        "name": "Inverter production"
+      },
+      "pv_production": {
+        "name": "PV Inverter production"
+      },
+      "battery_backed_production": {
+        "name": "Battery-backed Inverter production"
+      },
+      "inverter_count": {
+        "name": "Assigned Inverters"
       }
     },
     "button": {
@@ -128,6 +212,14 @@
     "restart_not_helping": {
       "title": "Restarting DTU {dtu} does not help",
       "description": "The DTU {dtu} still delivers no data from its Inverters after several restarts. It is restarted less often now. Check for snow, a radio fault or a hardware problem."
+    }
+  },
+  "selector": {
+    "grid_meter_sign": {
+      "options": {
+        "import": "Positive values are import",
+        "export": "Positive values are export"
+      }
     }
   }
 }
