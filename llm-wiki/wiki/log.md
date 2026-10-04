@@ -1,6 +1,8 @@
 # Wiki Update Log
 
 ## 2026-10-04
+* **Update**: [Development workflow](project/development-workflow.md): Sonnet now writes the tests, Haiku only runs them.
+* **Update**: [Installation inventory](project/installation-inventory.md): Büro 3 confirmed as HM-1200-4T; added API observations made while building ticket 02.
 * **Update**: [Overview](project/overview.md) now points to the spec and tickets under `.scratch/nulleinspeisung/`.
 * **Update**: Recorded the final interview round in [Requirements decisions](project/requirements-decisions.md); no decisions remain open.
 * **Update**: Recorded the third interview round in [Requirements decisions](project/requirements-decisions.md).

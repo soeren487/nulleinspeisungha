@@ -6,5 +6,73 @@
         "description": "Add Nulleinspeisung to Home Assistant. DTUs and Houses are added afterwards."
       }
     }
+  },
+  "config_subentries": {
+    "dtu": {
+      "entry_type": "DTU",
+      "initiate_flow": {
+        "user": "Add DTU",
+        "reconfigure": "Reconfigure DTU"
+      },
+      "step": {
+        "user": {
+          "title": "Add DTU",
+          "description": "Enter the address and the administrator password of the OpenDTU.",
+          "data": {
+            "url": "Address",
+            "password": "Password"
+          },
+          "data_description": {
+            "url": "Address of the DTU, for example 192.168.1.50 or http://opendtu.local",
+            "password": "Administrator password of the DTU (user admin)"
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure DTU",
+          "description": "Change the address or the administrator password of this DTU.",
+          "data": {
+            "url": "Address",
+            "password": "Password"
+          },
+          "data_description": {
+            "url": "Address of the DTU, for example 192.168.1.50 or http://opendtu.local",
+            "password": "Administrator password of the DTU (user admin)"
+          }
+        }
+      },
+      "error": {
+        "cannot_connect": "Cannot connect to the DTU. Check the address.",
+        "invalid_auth": "The administrator password was refused."
+      },
+      "abort": {
+        "already_configured": "This DTU has already been added.",
+        "wrong_dtu": "The address belongs to a different DTU.",
+        "reconfigure_successful": "The DTU was updated."
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "reachable": {
+        "name": "Reachable"
+      },
+      "producing": {
+        "name": "Producing"
+      }
+    },
+    "sensor": {
+      "power": {
+        "name": "Power"
+      },
+      "limit": {
+        "name": "Inverter limit"
+      },
+      "data_age": {
+        "name": "Data age"
+      },
+      "rated_power": {
+        "name": "Rated power"
+      }
+    }
   }
 }
