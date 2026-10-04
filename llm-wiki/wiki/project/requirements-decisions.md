@@ -4,7 +4,7 @@ title: Requirements decisions
 description: All decisions settled in the requirements interview of 2026-10-04, and the facts still to be verified.
 tags: [project, requirements]
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T12:40:00Z }
+generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T22:50:00Z }
 sources:
   - id: interview
     resource: requirements interview with Soeren, 2026-10-04
@@ -50,7 +50,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 | Discharge block scope | Applies in every quarter-hour whose price level is in the configured set, also when no charging is planned. PV surplus may still charge the battery; battery-backed inverters still deliver. The set is the same one that qualifies for charging |
 | Grid charging mechanism | The true grid power is always passed to the AC battery. Charging uses Victron's setpoint override, the discharge block uses a maximum discharge power of 0. Conditional on a test on the real system (override expiry, frozen meter value); fallback is the offset on the reported grid power |
 | Dynamic ESS | Must be off on both GX devices. The integration checks and raises a repair issue, but does not switch it off |
-| Stuck DTU rule | Stuck when the sun is above a configurable angle (default 5 degrees) and none of the DTU's PV inverters has fresh data for 2 minutes; battery-backed inverters are ignored. Also stuck at any sun angle when an inverter on another DTU of the same house is producing while this DTU has no fresh data. Never restarted at night |
+| Stuck DTU rule | Stuck when the sun is above a configurable angle (default 5 degrees) and none of the DTU's PV inverters has fresh data for 2 minutes; battery-backed inverters are ignored. Also stuck at any sun angle when a PV inverter on another DTU of the same house is producing at least 50 W with fresh data while this DTU has no fresh data (narrowed in ticket 05: a battery-backed inverter producing at night must not count, and roofs wake at different times). Otherwise never restarted at night |
 | Restart policy | Wait 3 minutes after a restart. After 3 failed restarts in a row, double the wait each time up to 1 hour and alert. Fresh data resets this. No daily cap |
 | Entities | Per house: switches for curtailment and grid charging; numbers for feed-in setpoint, update interval, target charge level, maximum charge power; sensors for inverter limit, control state, planned charging quarter-hours, forecast surplus, energy to buy. Per DTU: stuck indicator, restart button, restart counter, last restart time. Per inverter: limit and reachability |
 | Alerts | Home Assistant repair issues, optionally also a chosen notification target |

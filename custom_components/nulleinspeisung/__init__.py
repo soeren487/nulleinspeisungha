@@ -14,6 +14,7 @@ from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
 from .dtu_client import DtuClient
 from .house import House, HouseConfig, house_subentries
+from .house_knowledge import HouseKnowledge
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -42,13 +43,16 @@ async def async_setup_entry(
     """Set up Nulleinspeisung from a config entry."""
     session = async_get_clientsession(hass)
     coordinators: dict[str, DtuCoordinator] = {}
+    knowledge = HouseKnowledge(
+        [HouseConfig.from_subentry(s) for s in house_subentries(entry)], coordinators
+    )
     for subentry_id, subentry in entry.subentries.items():
         if subentry.subentry_type != SUBENTRY_TYPE_DTU:
             continue
         client = DtuClient(
             session, subentry.data[CONF_URL], subentry.data[CONF_PASSWORD]
         )
-        coordinator = DtuCoordinator(hass, entry, subentry, client)
+        coordinator = DtuCoordinator(hass, entry, subentry, client, knowledge)
         # A DTU that does not answer must not block the others: refresh without
         # raising, and let the listeners do their work on the first success.
         await coordinator.async_refresh()

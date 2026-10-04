@@ -41,7 +41,7 @@ Shared across both houses:[^initial-requirements]
 
 # State
 
-- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`; each ticket file carries its status. Tickets 01 to 04 are done as of 2026-10-04: the integration installs, connects DTUs, restarts a stuck DTU, and has Houses with a grid meter and assigned inverters. Nothing has been installed on the production Home Assistant yet.[^repo-state]
+- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`; each ticket file carries its status. Tickets 01 to 05 are done as of 2026-10-04: the integration installs, connects DTUs, restarts a stuck DTU, and has Houses with a grid meter and assigned inverters. Nothing has been installed on the production Home Assistant yet.[^repo-state]
 - Remote `origin` is a self-hosted forge at `docker.lan.slcl.eu:2424` (`soeren/nulleinspeisungha`); its type is not identified.[^repo-state]
 
 # Related

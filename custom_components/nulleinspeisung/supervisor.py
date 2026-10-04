@@ -31,6 +31,7 @@ from .dtu_health import (
     is_stuck,
 )
 from .dtu_models import DtuSnapshot
+from .house_knowledge import HouseKnowledge
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -56,12 +57,14 @@ class DtuSupervisor:
         entry: ConfigEntry,
         subentry: ConfigSubentry,
         client: DtuClient,
+        knowledge: HouseKnowledge | None = None,
     ) -> None:
         """Create the supervisor for the DTU described by ``subentry``."""
         self._hass = hass
         self._entry = entry
         self._subentry = subentry
         self._client = client
+        self._knowledge = knowledge or HouseKnowledge((), {})
         data = subentry.data
         self._settings = StuckSettings(
             sun_angle=float(data.get(CONF_SUN_ANGLE, DEFAULT_SUN_ANGLE)),
@@ -82,6 +85,11 @@ class DtuSupervisor:
         self.restart_count = 0
         self.last_restart: datetime | None = None
 
+    @property
+    def staleness_time(self) -> float:
+        """Seconds after which Inverter data of this DTU counts as stale."""
+        return self._settings.staleness_time
+
     def arm(self) -> None:
         """Allow automatic restarts, once the owner's switch state is restored."""
         self._armed = True
@@ -92,9 +100,17 @@ class DtuSupervisor:
         self._last_answer = now
         self._resolve(ISSUE_UNREACHABLE)
         looks_stuck = is_stuck(
-            [InverterObservation(i.data_age) for i in snapshot.inverters.values()],
+            [
+                InverterObservation(
+                    i.data_age, is_pv=not self._knowledge.is_battery_backed(i.serial)
+                )
+                for i in snapshot.inverters.values()
+            ],
             solar.sun_elevation(self._hass),
             self._settings,
+            other_dtu_producing=self._knowledge.other_dtu_producing(
+                self._subentry.subentry_id, snapshot.inverters
+            ),
         )
         verdict = self._policy.evaluate(now, looks_stuck)
         if verdict.action is Action.RESTART and self.automatic_restart and self._armed:

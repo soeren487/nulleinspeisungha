@@ -42,18 +42,17 @@ def is_stuck(
 ) -> bool:
     """Decide whether a DTU is a Stuck DTU.
 
-    Stuck means: the sun is above the sun angle, the DTU has at least one PV
-    Inverter, and none of them has data younger than the staleness time.
-    ``other_dtu_producing`` is reserved for the rule "another DTU of the same
-    House is producing" and is not evaluated yet.
+    Stuck means the DTU has at least one PV Inverter, none of them has data
+    younger than the staleness time, and either the sun is above the sun
+    angle or ``other_dtu_producing`` (another DTU of the same House delivers
+    power, which makes silence here wrong at any sun angle).
     """
-    del other_dtu_producing
-    if sun_elevation <= settings.sun_angle:
-        return False
     pv_ages = [o.data_age for o in observations if o.is_pv]
     if not pv_ages:
         return False
-    return all(age >= settings.staleness_time for age in pv_ages)
+    if not all(age >= settings.staleness_time for age in pv_ages):
+        return False
+    return sun_elevation > settings.sun_angle or other_dtu_producing
 
 
 class Action(StrEnum):

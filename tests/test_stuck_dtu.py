@@ -26,7 +26,14 @@ from custom_components.nulleinspeisung.const import (
     DOMAIN,
     DTU_UPDATE_INTERVAL,
 )
-from tests.conftest import DtuNetwork, SimDtu, Sun, setup_entry
+from tests.conftest import (
+    DtuNetwork,
+    SimDtu,
+    SimHouse,
+    Sun,
+    second_dtu,
+    setup_entry,
+)
 
 SERIAL = "199980126212"
 STEP = int(DTU_UPDATE_INTERVAL.total_seconds())
@@ -549,3 +556,127 @@ async def test_wait_is_at_least_staleness_time_plus_thirty_seconds(
     assert len(dtu_network.reboots()) == 1
     await advance(hass, freezer, 100)
     assert len(dtu_network.reboots()) == 2
+
+
+# --- House knowledge ------------------------------------------------------
+
+OMA = "114183178036"
+BUERO4 = "116191100801"
+BUERO5 = "1164a00ccd81"
+GARAGE_1 = "200000000001"
+GARAGE_2 = "200000000002"
+GARAGE_SERIAL = "199980126999"
+
+
+def producing_garage() -> SimDtu:
+    """The second DTU, whose Inverters deliver fresh data and 200 W each."""
+    dtu = second_dtu()
+    for inverter in dtu.inverters:
+        inverter.data_age = 3
+        inverter.producing = True
+        inverter.reachable = True
+        inverter.power = 200.0
+    return dtu
+
+
+async def test_silent_battery_backed_inverters_are_not_restarted_by_day(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """A DTU whose silent Inverters are all Battery-backed is fine."""
+    sun.elevation = 30
+    house = SimHouse(
+        "Home", inverters=[OMA, BUERO4, BUERO5], battery_backed=[OMA, BUERO4, BUERO5]
+    )
+    await setup_entry(hass, dtu_network, stuck_dtu(), houses=[house])
+    await advance(hass, freezer, 60)
+
+    assert dtu_network.reboots() == []
+    assert state(hass, "binary_sensor", "stuck") == STATE_OFF
+
+
+async def test_battery_backed_silence_ignored_but_pv_silence_counts(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """With one silent PV Inverter left, the DTU is stuck by day."""
+    sun.elevation = 30
+    house = SimHouse(
+        "Home", inverters=[OMA, BUERO4, BUERO5], battery_backed=[OMA, BUERO4]
+    )
+    await setup_entry(hass, dtu_network, stuck_dtu(), houses=[house])
+    await advance(hass, freezer, 30)
+
+    assert len(dtu_network.reboots()) == 1
+
+
+async def test_restart_below_sun_angle_when_house_neighbour_produces(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """Another DTU of the same House produces: the silent one is restarted."""
+    sun.elevation = 1
+    house = SimHouse("Home", inverters=[OMA, GARAGE_1])
+    await setup_entry(
+        hass, dtu_network, stuck_dtu(), producing_garage(), houses=[house]
+    )
+    await advance(hass, freezer, 30)
+
+    assert len(dtu_network.reboots()) == 1
+    assert dtu_network.reboots(GARAGE_SERIAL) == []
+    assert state(hass, "binary_sensor", "stuck") == STATE_ON
+
+
+async def test_no_restart_when_only_producer_elsewhere_is_battery_backed(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """At night the Battery-backed Inverters produce; that proves nothing."""
+    sun.elevation = -20
+    house = SimHouse("Home", inverters=[OMA, GARAGE_1], battery_backed=[GARAGE_1])
+    await setup_entry(
+        hass, dtu_network, stuck_dtu(), producing_garage(), houses=[house]
+    )
+    await advance(hass, freezer, 60)
+
+    assert dtu_network.reboots() == []
+    assert state(hass, "binary_sensor", "stuck") == STATE_OFF
+
+
+async def test_no_restart_when_producer_belongs_to_another_house(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """A producer of a different House says nothing about this DTU."""
+    sun.elevation = 1
+    houses = [
+        SimHouse("Home", inverters=[OMA]),
+        SimHouse("Garage", inverters=[GARAGE_1]),
+    ]
+    await setup_entry(hass, dtu_network, stuck_dtu(), producing_garage(), houses=houses)
+    await advance(hass, freezer, 60)
+
+    assert dtu_network.reboots() == []
+
+
+async def test_no_restart_below_sun_angle_without_houses(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """Without Houses nothing changes: low sun means no restart."""
+    sun.elevation = 1
+    await setup_entry(hass, dtu_network, stuck_dtu(), producing_garage())
+    await advance(hass, freezer, 60)
+
+    assert dtu_network.reboots() == []
+
+
+async def test_dtu_serving_two_houses_is_judged_by_both(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, sun: Sun
+) -> None:
+    """The second House's producer elsewhere is enough to restart."""
+    sun.elevation = 1
+    garage = producing_garage()
+    garage.inverters[0].power = 10.0  # first House's neighbour: only dawn trickle
+    houses = [
+        SimHouse("Home", inverters=[OMA, GARAGE_1]),
+        SimHouse("Annex", inverters=[BUERO4, GARAGE_2]),
+    ]
+    await setup_entry(hass, dtu_network, stuck_dtu(), garage, houses=houses)
+    await advance(hass, freezer, 30)
+
+    assert len(dtu_network.reboots()) == 1
