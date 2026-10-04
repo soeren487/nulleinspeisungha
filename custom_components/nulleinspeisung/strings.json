@@ -169,6 +169,9 @@
       },
       "battery_connected": {
         "name": "AC Battery connected"
+      },
+      "expected_load_learned": {
+        "name": "Expected Load learned"
       }
     },
     "sensor": {
@@ -262,6 +265,15 @@
       },
       "consumption": {
         "name": "Consumption"
+      },
+      "expected_load": {
+        "name": "Expected Load"
+      },
+      "expected_load_24h": {
+        "name": "Expected Load next 24 hours"
+      },
+      "load_history_days": {
+        "name": "Load history days"
       }
     },
     "button": {
@@ -292,6 +304,9 @@
       },
       "maximum_charge_power": {
         "name": "Maximum Charge Power"
+      },
+      "fallback_daily_consumption": {
+        "name": "Fallback daily consumption"
       }
     },
     "select": {

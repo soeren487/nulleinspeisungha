@@ -169,6 +169,9 @@
       },
       "battery_connected": {
         "name": "AC-Batterie verbunden"
+      },
+      "expected_load_learned": {
+        "name": "Erwartete Last gelernt"
       }
     },
     "sensor": {
@@ -262,6 +265,15 @@
       },
       "consumption": {
         "name": "Verbrauch"
+      },
+      "expected_load": {
+        "name": "Erwartete Last"
+      },
+      "expected_load_24h": {
+        "name": "Erwartete Last nächste 24 Stunden"
+      },
+      "load_history_days": {
+        "name": "Lastverlaufstage"
       }
     },
     "button": {
@@ -292,6 +304,9 @@
       },
       "maximum_charge_power": {
         "name": "Maximale Ladeleistung"
+      },
+      "fallback_daily_consumption": {
+        "name": "Ersatz-Tagesverbrauch"
       }
     },
     "select": {

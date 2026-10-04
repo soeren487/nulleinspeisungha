@@ -38,6 +38,7 @@ from .entity import (
     setup_house_entities,
     setup_inverter_entities,
 )
+from .forecast import slot_start
 from .house import House
 from .price_source import PriceLevel
 
@@ -213,6 +214,9 @@ async def async_setup_entry(
                 if house.prices is not None
                 else []
             ),
+            ExpectedLoadSensor(house),
+            ExpectedLoadEnergySensor(house),
+            LoadHistoryDaysSensor(house),
             *(
                 [
                     ForecastPowerSensor(house),
@@ -580,3 +584,67 @@ class ForecastHistoryDaysSensor(_ForecastSensor):
     def native_value(self) -> int | None:
         """Days with enough usable records."""
         return self.house.forecast.history_days if self.house.forecast else None
+
+
+class _ExpectedLoadSensor(HouseEntity, SensorEntity):
+    """A sensor that follows the House's Expected Load."""
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the Expected Load changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            self.house.expected_load.async_add_listener(self._handle_change)
+        )
+
+
+class ExpectedLoadSensor(_ExpectedLoadSensor):
+    """The Expected Load of the current quarter-hour."""
+
+    _attr_translation_key = "expected_load"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "expected_load")
+
+    @property
+    def native_value(self) -> float:
+        """Expected consumption in W."""
+        return round(self.house.expected_load.at(slot_start(dt_util.utcnow())), 1)
+
+
+class ExpectedLoadEnergySensor(_ExpectedLoadSensor):
+    """The Expected Load summed over the next 24 hours."""
+
+    _attr_translation_key = "expected_load_24h"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "expected_load_24h")
+
+    @property
+    def native_value(self) -> float:
+        """Expected consumption in kWh."""
+        return round(self.house.expected_load.energy_next_24h(), 3)
+
+
+class LoadHistoryDaysSensor(_ExpectedLoadSensor):
+    """How many days of history count towards the Expected Load being learned."""
+
+    _attr_translation_key = "load_history_days"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "load_history_days")
+
+    @property
+    def native_value(self) -> int:
+        """Number of days with enough records."""
+        return self.house.expected_load.learned_days

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from homeassistant.components.number import (
     NumberDeviceClass,
@@ -11,12 +12,19 @@ from homeassistant.components.number import (
     NumberMode,
     RestoreNumber,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NulleinspeisungConfigEntry
 from .entity import HouseEntity, setup_house_entities
+from .expected_load import DEFAULT_FALLBACK_KWH
 from .house import House
 from .house_control import (
     DEFAULT_FEED_IN_SETPOINT,
@@ -33,8 +41,11 @@ class HouseNumberDescription(NumberEntityDescription):
     """Describes a setting of a House's control."""
 
     default: float
-    getter: Callable[[HouseControl], float]
-    setter: Callable[[HouseControl, float], None]
+    getter: Callable[[Any], float]
+    setter: Callable[[Any, float], None]
+    """Read and change the setting on the object ``target`` names."""
+    on_expected_load: bool = False
+    """The setting belongs to the House's Expected Load, not to its control."""
     battery_only: bool = False
     """Only for Houses with an AC Battery."""
 
@@ -111,6 +122,21 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
         getter=lambda control: control.maximum_charge_power,
         setter=lambda control, value: control.set_maximum_charge_power(value),
     ),
+    HouseNumberDescription(
+        key="fallback_daily_consumption",
+        translation_key="fallback_daily_consumption",
+        device_class=NumberDeviceClass.ENERGY,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        native_min_value=1,
+        native_max_value=200,
+        native_step=0.5,
+        mode=NumberMode.BOX,
+        entity_category=EntityCategory.CONFIG,
+        default=DEFAULT_FALLBACK_KWH,
+        on_expected_load=True,
+        getter=lambda expected_load: expected_load.fallback_kwh,
+        setter=lambda expected_load, value: expected_load.set_fallback_kwh(value),
+    ),
 )
 
 
@@ -149,14 +175,21 @@ class HouseNumber(HouseEntity, RestoreNumber):
             description = self.entity_description
             value = float(last.native_value)
             if description.native_min_value <= value <= description.native_max_value:
-                description.setter(self.house.control, value)
+                description.setter(self._target, value)
+
+    @property
+    def _target(self) -> Any:
+        """The object that holds the setting."""
+        if self.entity_description.on_expected_load:
+            return self.house.expected_load
+        return self.house.control
 
     @property
     def native_value(self) -> float:
         """The current setting."""
-        return self.entity_description.getter(self.house.control)
+        return self.entity_description.getter(self._target)
 
     async def async_set_native_value(self, value: float) -> None:
         """Change the setting; it takes effect from the next run."""
-        self.entity_description.setter(self.house.control, value)
+        self.entity_description.setter(self._target, value)
         self.async_write_ha_state()
