@@ -19,6 +19,7 @@ Python tooling runs through `uv` (Python 3.14, versions pinned in `uv.lock`).
 - **Trust signals.** A page that is `status: draft` or past its `stale_after` is a lead to re-check, not a fact.
 - **Sub-agents** get the relevant wiki pages as starting context and return findings for the orchestrator to file.
 - **Raw sources** in `llm-wiki/raw/` are immutable.
+- **The repository is public.** Anything that identifies the owner's installation (addresses, host names, serial numbers, home or account ids, topic names) goes to `llm-wiki/private/`, which git ignores and which has its own `index.md`. Credentials are written nowhere. Test fixtures recorded from real services are sanitised before they are saved.
 
 Read `llm-wiki/SCHEMA.md` before writing a page, ingesting a source, or linting. Do not read `llm-wiki/llm-wiki.md` or `llm-wiki/SPEC.md` (about 12k tokens together) unless the schema itself is being changed; `SCHEMA.md` distils them.
 
