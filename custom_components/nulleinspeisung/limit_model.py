@@ -64,19 +64,41 @@ class LimitState:
         """
         effective = self.effective_at(now, slew_rate)
         now_w = effective / 100 * rated_power
-        measured_w = self.effective_at(now - reading_age, slew_rate) / 100 * rated_power
+        measured = self.effective_at(now - reading_age, slew_rate)
+        measured_w = measured / 100 * rated_power
         final_w = self.target / 100 * rated_power
-        if self.target < effective:
-            if production is None:
-                return final_w - now_w
+        if production is None:
+            # No reading since the command: the output follows the effective limit.
+            return final_w - now_w if self.target != effective else 0.0
+        # A reading shows the output of the time it was taken. While the
+        # effective limit has reached the target only after that, the reading
+        # does not show the final output yet, so the change is still pending.
+        if self.target < measured:
             return min(production, final_w) - production
-        if self.target > effective:
-            if production is None:
-                return final_w - now_w
+        if self.target > measured:
             if production >= measured_w - LIMITED_MARGIN / 100 * rated_power:
                 return final_w - production
             return 0.0
         return 0.0
+
+
+def is_limited(
+    state: LimitState,
+    now: float,
+    rated_power: float,
+    production: float | None,
+    slew_rate: float,
+    reading_age: float = 0.0,
+) -> bool | None:
+    """Whether the effective limit is what holds the output down; ``None`` without
+    a reading. Judged as in ``pending_change``: the output reached the effective
+    limit of the time it was measured."""
+    if production is None:
+        return None
+    measured = state.effective_at(now - reading_age, slew_rate)
+    return (
+        production >= measured / 100 * rated_power - LIMITED_MARGIN / 100 * rated_power
+    )
 
 
 def ceiling(production: float | None, rated_power: float, reserve: float) -> float:

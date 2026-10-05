@@ -324,6 +324,18 @@ def test_a_pending_change_never_reverses_the_deviation() -> None:
     assert importing.corrected_deviation == 0
 
 
+def test_a_pending_change_never_enlarges_the_deviation() -> None:
+    """A lowering on its way is no import to raise for: the Inverter may deliver
+    less than its limit, and then the lowering changes less than it says."""
+    quiet = _full(0, [_pending(-500)])
+    assert quiet.state is ControlState.HOLDING
+    assert quiet.corrected_deviation == 0
+    importing = _full(100, [_pending(-500)], headroom=0)
+    assert importing.corrected_deviation == pytest.approx(100)
+    exporting = _full(-100, [_pending(500, production=300, limit=30)])
+    assert exporting.corrected_deviation == pytest.approx(-100)
+
+
 def test_the_band_test_uses_the_corrected_deviation() -> None:
     """An export of 100 W is beyond the band, but not with 90 W on its way."""
     assert _full(-100, [_pending(0)]).state is ControlState.LOWERING

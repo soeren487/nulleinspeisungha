@@ -26,7 +26,13 @@ from .battery_watch import ISSUE_SETPOINT_CONFLICT, sync_issue
 from .curtailment import ControllableInverter, ControlState, GroupDecision, decide_house
 from .dtu_client import DtuAuthError, DtuConnectionError
 from .failure import Assessment, FailureWatch
-from .limit_model import DEFAULT_SLEW_RATE, LimitState, ceiling, next_ceiling
+from .limit_model import (
+    DEFAULT_SLEW_RATE,
+    LimitState,
+    ceiling,
+    is_limited,
+    next_ceiling,
+)
 from .limit_split import LimitSplit, split_equally
 
 if TYPE_CHECKING:
@@ -336,6 +342,18 @@ class HouseControl:
                         limit=self._sent.get(
                             i.serial, self._pending.get(i.serial, FULL_LIMIT)
                         ),
+                        limited=(
+                            is_limited(
+                                model,
+                                now,
+                                i.rated_power,
+                                production,
+                                self.limit_slew_rate,
+                                i.data_age,
+                            )
+                            if model is not None
+                            else None
+                        ),
                         pending_change=(
                             model.pending_change(
                                 now,
@@ -362,6 +380,7 @@ class HouseControl:
             inputs(bb_group),
             self._house.consumption(),
             0.0 if self.headroom_suppressed() else headroom,
+            any(self._wanted.get(i.serial, FULL_LIMIT) < FULL_LIMIT for i in pv_group),
         )
         # The corrected deviation: an export a lowering on its way will remove
         # does not arm the guard. Beyond the band the headroom has no effect on

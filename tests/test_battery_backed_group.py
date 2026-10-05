@@ -254,6 +254,98 @@ def test_unknown_consumption_applies_neither_cap_nor_release() -> None:
     assert capped.battery_backed.allowed_power == pytest.approx(1000)
 
 
+def _on_its_way(pending: float, **kwargs) -> ControllableInverter:
+    return ControllableInverter(
+        rated_power=kwargs.get("rated", 1500),
+        production=kwargs.get("production", 300),
+        limit=kwargs.get("limit", 20),
+        pending_change=pending,
+    )
+
+
+def test_the_cap_waits_while_a_change_is_on_its_way() -> None:
+    """Delivering 600 W for 300 W of consumption, with 100 W still on its way."""
+    bb = [_on_its_way(-100, production=600, limit=40)]
+    assert _house(0, [], bb, consumption=300).battery_backed.allowed_power == (
+        pytest.approx(600)
+    )
+    bb = [_on_its_way(-20, production=600, limit=40)]  # within the band
+    assert _house(0, [], bb, consumption=300).battery_backed.allowed_power == (
+        pytest.approx(300)
+    )
+
+
+def test_the_cap_waits_while_the_pv_group_has_a_change_on_its_way() -> None:
+    pv = [_on_its_way(-100, production=500, limit=100)]
+    bb = [_inv(rated=1500, production=600, limit=40)]
+    assert _house(0, pv, bb, consumption=300).battery_backed.allowed_power == (
+        pytest.approx(600)
+    )
+
+
+def test_the_release_waits_while_a_change_is_on_its_way() -> None:
+    bb = [_on_its_way(100)]
+    assert _released(bb=bb).battery_backed.allowed_power == pytest.approx(300)
+    assert not _released(bb=bb).battery_backed.changed
+
+
+def test_the_cap_does_not_act_on_a_reading_older_than_the_last_command() -> None:
+    """Without a reading the group would be taken to deliver its allowance."""
+    unknown = [_inv(rated=1500, production=None, limit=100)]
+    decision = _house(0, [], unknown, consumption=1000)
+    assert decision.battery_backed.allowed_power == pytest.approx(1500)
+    assert not decision.battery_backed.changed
+
+
+def test_the_release_still_assumes_the_allowance_is_biting_without_a_reading() -> None:
+    unknown = [_inv(rated=1500, production=None, limit=20)]
+    assert _released(bb=unknown).battery_backed.allowed_power == pytest.approx(1000)
+
+
+def test_the_release_follows_the_curtailed_fact_not_the_pv_allowance() -> None:
+    """A ceiling of the response reserve holds the PV group below 100 %."""
+    pv = [_inv(limit=60)]
+    bb = [_inv(rated=1500, production=300, limit=20)]
+
+    def run(curtailed):
+        return decide_house(0, 0.0, 30.0, 5.0, pv, bb, 1000, 0.0, curtailed)
+
+    assert run(False).battery_backed.allowed_power == pytest.approx(1000)
+    assert run(True).battery_backed.allowed_power == pytest.approx(300)
+    assert run(None).battery_backed.allowed_power == pytest.approx(300)
+
+
+def _idle(limited: bool | None, limit: float = 30) -> ControllableInverter:
+    return ControllableInverter(
+        rated_power=1000, production=300, limit=limit, limited=limited
+    )
+
+
+def test_a_raise_reaching_a_group_that_is_not_biting_goes_to_100_percent() -> None:
+    decision = _house(100, [], [_idle(False)])
+    assert decision.battery_backed.allowed_power == pytest.approx(1000)
+    pv = _house(100, [_idle(False)], [])
+    assert pv.pv.allowed_power == pytest.approx(1000)
+
+
+def test_a_raise_reaching_a_biting_or_unread_group_is_the_deviation() -> None:
+    assert _house(100, [], [_idle(True)]).battery_backed.allowed_power == (
+        pytest.approx(400)
+    )
+    assert _house(100, [], [_idle(None)]).battery_backed.allowed_power == (
+        pytest.approx(400)
+    )
+    assert _house(
+        100, [], [_idle(False), _idle(True)]
+    ).battery_backed.allowed_power == (pytest.approx(700))
+
+
+def test_a_pv_group_that_is_not_biting_still_leaves_the_import_to_the_other() -> None:
+    decision = _house(500, [_idle(False, 90)], [_idle(False)])
+    assert decision.pv.allowed_power == pytest.approx(1000)
+    assert decision.battery_backed.allowed_power == pytest.approx(1000)
+
+
 def test_a_house_with_only_pv_inverters() -> None:
     decision = _house(-200, [_inv()], [], consumption=0)
     assert decision.battery_backed is None
