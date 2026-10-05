@@ -33,7 +33,11 @@ class ControllableInverter:
     """Current production in W; ``None`` if unknown or not newer than the
     House's last limit change."""
     limit: float
-    """Percent the House last gave it; 100 if it has not given it one."""
+    """Percent the House last gave it (its target); 100 if it has not given it
+    one."""
+    pending_change: float = 0.0
+    """Signed W the output will still change by because of the limit already
+    sent: negative for a lowering still on its way."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +61,9 @@ class HouseDecision:
     """``None`` if no PV Inverter is controllable."""
     battery_backed: GroupDecision | None
     """``None`` if no Battery-backed Inverter is controllable."""
+    corrected_deviation: float = 0.0
+    """Grid Power minus its target, minus the pending changes of all Inverters,
+    in W; without battery headroom."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +108,14 @@ def decide_house(
     """Decide the allowed production of the PV group and the Battery-backed group.
 
     Inside the tolerance band a group's allowance is kept; outside it the
-    allowance moves by the deviation. Lowering starts from the sum over the
-    Inverters of the smaller of allowance and production, raising from the
-    allowance. ``battery_headroom`` is the charge power the AC Battery could
-    still take: it raises the deviation unless the House exports beyond the
-    band.
+    allowance moves by the deviation. The deviation is corrected by the change
+    the Inverters have still to make because of limits already sent: an export
+    that a lowering on its way will remove is no deviation (but a pending change
+    never turns an export into an import or the other way round). Lowering starts
+    from the sum over the Inverters of the smaller of allowance and production,
+    raising from the allowance. ``battery_headroom`` is the charge power the
+    AC Battery could still take: it raises the deviation unless the House
+    exports beyond the band.
 
     Lowering takes from the Battery-backed group first (its lost energy stays
     stored) and from the PV group only what remains. Raising gives to the PV
@@ -121,7 +131,9 @@ def decide_house(
     consumption (at most the rated power).
     """
     if not pv_inverters and not battery_backed_inverters:
-        return HouseDecision(ControlState.NO_INVERTER, None, None)
+        return HouseDecision(
+            ControlState.NO_INVERTER, None, None, grid_power + feed_in_setpoint
+        )
     pv = _group(pv_inverters, floor_percent) if pv_inverters else None
     bb = (
         _group(battery_backed_inverters, floor_percent)
@@ -132,7 +144,13 @@ def decide_house(
     new_bb = bb.allowed if bb else 0.0
     touched_pv = touched_bb = False
 
+    pending = sum(i.pending_change for i in (*pv_inverters, *battery_backed_inverters))
     grid_deviation = grid_power - (-feed_in_setpoint)
+    corrected = grid_deviation - pending
+    # The pending change may cancel the deviation, never reverse it: a
+    # production reading older than the Grid Power would otherwise turn an
+    # export that is still going away into a demand to raise.
+    grid_deviation = 0.0 if corrected * grid_deviation < 0 else corrected
     deviation = grid_deviation
     if deviation >= -tolerance_band:
         deviation += battery_headroom
@@ -191,4 +209,4 @@ def decide_house(
         bb is not None and new_bb < bb.allowed
     )
     state = ControlState.LOWERING if lowered else step
-    return HouseDecision(state, pv_result, bb_result)
+    return HouseDecision(state, pv_result, bb_result, grid_deviation)

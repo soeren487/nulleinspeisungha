@@ -302,6 +302,12 @@
       "limit_floor": {
         "name": "Limit floor"
       },
+      "limit_slew_rate": {
+        "name": "Limit slew rate"
+      },
+      "response_reserve": {
+        "name": "Response reserve"
+      },
       "maximum_charge_power": {
         "name": "Maximum Charge Power"
       },

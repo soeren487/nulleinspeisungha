@@ -302,6 +302,12 @@
       "limit_floor": {
         "name": "Untergrenze des Limits"
       },
+      "limit_slew_rate": {
+        "name": "Änderungsrate des Limits"
+      },
+      "response_reserve": {
+        "name": "Reaktionsreserve"
+      },
       "maximum_charge_power": {
         "name": "Maximale Ladeleistung"
       },

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
@@ -25,6 +26,7 @@ from .battery_watch import ISSUE_SETPOINT_CONFLICT, sync_issue
 from .curtailment import ControllableInverter, ControlState, GroupDecision, decide_house
 from .dtu_client import DtuAuthError, DtuConnectionError
 from .failure import Assessment, FailureWatch
+from .limit_model import DEFAULT_SLEW_RATE, LimitState, ceiling, next_ceiling
 from .limit_split import LimitSplit, split_equally
 
 if TYPE_CHECKING:
@@ -37,6 +39,8 @@ DEFAULT_UPDATE_INTERVAL = 15.0
 DEFAULT_TOLERANCE_BAND = 30.0
 DEFAULT_LIMIT_FLOOR = 5.0
 DEFAULT_MAXIMUM_CHARGE_POWER = 2100.0
+DEFAULT_LIMIT_SLEW_RATE = DEFAULT_SLEW_RATE
+DEFAULT_RESPONSE_RESERVE = 0.0
 
 HEADROOM_SUPPRESSION = 300.0
 """Seconds the battery headroom counts as zero after the House exported anyway."""
@@ -83,6 +87,10 @@ class HouseControl:
         self.limit_floor = DEFAULT_LIMIT_FLOOR
         self.maximum_charge_power = DEFAULT_MAXIMUM_CHARGE_POWER
         """The highest power in W at which the House's AC Battery can charge."""
+        self.limit_slew_rate = DEFAULT_LIMIT_SLEW_RATE
+        """Percent of rated power per second an Inverter's effective limit moves."""
+        self.response_reserve = DEFAULT_RESPONSE_RESERVE
+        """Percent of rated power the limits are kept above the output; 0 is off."""
         self._headroom_suppressed_until = 0.0
         self._export_seen = False
         """The previous run exported beyond the band while headroom was positive."""
@@ -103,6 +111,14 @@ class HouseControl:
         self._sent: dict[str, int] = {}
         self._sent_at: dict[str, float] = {}
         """Seconds (Home Assistant clock) at which each limit was sent."""
+        self._models: dict[str, LimitState] = {}
+        """The effective limit of each Inverter the House sent a limit to."""
+        self._uncapped: dict[str, int] = {}
+        """The percent the controller wanted, before the response reserve."""
+        self._wanted: dict[str, int] = {}
+        """The percent the controller and split asked, before any reserve cap."""
+        self._ceilings: dict[str, float] = {}
+        """The ceiling last applied to each Inverter by the response reserve."""
         self._started = False
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._lock = asyncio.Lock()
@@ -129,20 +145,14 @@ class HouseControl:
 
     @property
     def curtailing(self) -> bool:
-        """Whether the House currently asks less than 100 % of any Inverter."""
-        if not self.curtailment:
-            return False
-        if any(
-            percent is not None and percent < FULL_LIMIT
-            for percent in (
-                self.requested_percent,
-                self.requested_percent_battery_backed,
-            )
-        ):
-            return True
-        return any(
-            percent < FULL_LIMIT
-            for percent in (*self._sent.values(), *self._pending.values())
+        """Whether the House holds production back on purpose.
+
+        True when the controller and limit split asked less than 100 % of any
+        Inverter; a limit below 100 % only because of the response reserve's
+        ceiling does not count.
+        """
+        return self.curtailment and any(
+            percent < FULL_LIMIT for percent in self._wanted.values()
         )
 
     # -- settings ----------------------------------------------------------
@@ -272,6 +282,7 @@ class HouseControl:
                 if serial in dtu.data.inverters:
                     self._pending[serial] = self._sent.pop(serial)
                     self._sent_at.pop(serial, None)
+                    self._models.pop(serial, None)
 
     async def _async_step_locked(self) -> None:
         seen, self._export_seen = self._export_seen, False
@@ -296,10 +307,15 @@ class HouseControl:
         group = self._controllable()
         # An Inverter we cannot reach may lose its non-persistent limit.
         controllable = {i.serial for i in group}
-        for serial in list(self._sent):
+        for serial in {
+            *self._sent,
+            *self._models,
+            *self._uncapped,
+            *self._ceilings,
+            *self._wanted,
+        }:
             if serial not in controllable:
-                self._sent.pop(serial)
-                self._sent_at.pop(serial, None)
+                self._forget(serial)
         now = dt_util.utcnow().timestamp()
         battery = self._house.battery
         target, capped = import_target(
@@ -307,29 +323,33 @@ class HouseControl:
         )
         sync_issue(self._house, ISSUE_SETPOINT_CONFLICT, capped)
         headroom = self._house.battery_headroom_raw()
-        if headroom > 0 and grid_power - target < -self.tolerance_band:
-            if self.headroom_suppressed() or seen:
-                # The battery was said to take more, yet the House exports
-                # again: it tapers without the BMS saying so.
-                self._headroom_suppressed_until = now + HEADROOM_SUPPRESSION
-            else:
-                # A battery ramps up over seconds: give it one Update Interval.
-                self._export_seen = True
-                self.state = ControlState.HOLDING
-                await self._async_resend(group)
-                return
 
         def inputs(members: list[_Controllable]) -> list[ControllableInverter]:
-            return [
-                ControllableInverter(
-                    rated_power=i.rated_power,
-                    production=i.production if self._reading_is_new(i, now) else None,
-                    limit=self._sent.get(
-                        i.serial, self._pending.get(i.serial, FULL_LIMIT)
-                    ),
+            result = []
+            for i in members:
+                production = i.production if self._reading_is_new(i, now) else None
+                model = self._models.get(i.serial)
+                result.append(
+                    ControllableInverter(
+                        rated_power=i.rated_power,
+                        production=production,
+                        limit=self._sent.get(
+                            i.serial, self._pending.get(i.serial, FULL_LIMIT)
+                        ),
+                        pending_change=(
+                            model.pending_change(
+                                now,
+                                i.rated_power,
+                                production,
+                                self.limit_slew_rate,
+                                i.data_age,
+                            )
+                            if model is not None
+                            else 0.0
+                        ),
+                    )
                 )
-                for i in members
-            ]
+            return result
 
         pv_group = [i for i in group if not i.battery_backed]
         bb_group = [i for i in group if i.battery_backed]
@@ -343,6 +363,20 @@ class HouseControl:
             self._house.consumption(),
             0.0 if self.headroom_suppressed() else headroom,
         )
+        # The corrected deviation: an export a lowering on its way will remove
+        # does not arm the guard. Beyond the band the headroom has no effect on
+        # the decision, so it need not be made again.
+        if headroom > 0 and decision.corrected_deviation < -self.tolerance_band:
+            if self.headroom_suppressed() or seen:
+                # The battery was said to take more, yet the House exports
+                # again: it tapers without the BMS saying so.
+                self._headroom_suppressed_until = now + HEADROOM_SUPPRESSION
+            else:
+                # A battery ramps up over seconds: give it one Update Interval.
+                self._export_seen = True
+                self.state = ControlState.HOLDING
+                await self._async_resend(group)
+                return
         self.state = decision.state
         if decision.state is ControlState.NO_INVERTER:
             self.requested_percent = None
@@ -365,7 +399,11 @@ class HouseControl:
         decision: GroupDecision | None,
         requested: int | None,
     ) -> int | None:
-        """Split a group's allowance, send what differs; the percent it asks."""
+        """Split a group's allowance, send what differs; the percent it asks.
+
+        With a response reserve each percent is capped by its Inverter's
+        ceiling, also in a run that otherwise holds.
+        """
         if decision is None:
             return None
         percents = self._split(
@@ -373,21 +411,67 @@ class HouseControl:
             {i.serial: i.rated_power for i in members},
             self.limit_floor,
         )
-        if percents and (requested is None or decision.changed):
-            requested = round(sum(percents.values()) / len(percents))
-        if decision.changed:
-            for inverter in members:
-                percent = percents[inverter.serial]
-                if self._sent.get(inverter.serial) == percent:
-                    continue
-                if await self._async_send(inverter.dtu_key, inverter.serial, percent):
-                    self._remember(inverter.serial, percent)
+        reserve = self.response_reserve > 0
+        final: dict[str, int] = {}
+        for inverter in members:
+            serial = inverter.serial
+            if decision.changed:
+                base = percents[serial]
+                self._wanted[serial] = base
+                if reserve:
+                    self._uncapped[serial] = base
+            elif reserve:
+                base = self._uncapped.get(serial, FULL_LIMIT)
+            elif serial in self._uncapped:
+                # The reserve was switched off: give back what it held down.
+                base = self._uncapped.pop(serial)
+            else:
+                continue
+            final[serial] = min(base, self._cap(inverter)) if reserve else base
+        if percents and (requested is None or decision.changed or reserve):
+            shown = final or percents
+            requested = round(sum(shown.values()) / len(shown))
+        for inverter in members:
+            percent = final.get(inverter.serial)
+            if percent is None:
+                continue
+            if decision.changed:
+                current = self._sent.get(inverter.serial)
+            else:
+                current = self._sent.get(
+                    inverter.serial, self._pending.get(inverter.serial, FULL_LIMIT)
+                )
+            if current == percent:
+                continue
+            if await self._async_send(inverter.dtu_key, inverter.serial, percent):
+                self._remember(inverter.serial, percent)
         return requested
 
-    def _remember(self, serial: str, percent: int) -> None:
+    def _cap(self, inverter: _Controllable) -> int:
+        """The highest whole percent the response reserve allows the Inverter."""
+        reserve = self.response_reserve
+        fresh = ceiling(inverter.production, inverter.rated_power, reserve)
+        applied = next_ceiling(self._ceilings.get(inverter.serial), fresh, reserve)
+        self._ceilings[inverter.serial] = applied
+        return max(math.ceil(self.limit_floor), min(round(applied), FULL_LIMIT))
+
+    def _remember(self, serial: str, percent: int, retarget: bool = True) -> None:
+        now = dt_util.utcnow().timestamp()
         self._sent[serial] = percent
-        self._sent_at[serial] = dt_util.utcnow().timestamp()
+        self._sent_at[serial] = now
         self._pending.pop(serial, None)
+        if retarget:
+            model = self._models.get(serial, LimitState())
+            self._models[serial] = model.retarget(now, percent, self.limit_slew_rate)
+
+    def _forget(self, serial: str) -> None:
+        """Forget what was sent to an Inverter: it is taken to be at 100 % again."""
+        self._sent.pop(serial, None)
+        self._sent_at.pop(serial, None)
+        self._models.pop(serial, None)
+        self._uncapped.pop(serial, None)
+        self._ceilings.pop(serial, None)
+        self._wanted.pop(serial, None)
 
     async def _async_resend(self, group: list[_Controllable]) -> None:
         """Send again what a restarted DTU lost, to Inverters that are reachable.
@@ -400,7 +484,7 @@ class HouseControl:
             if percent is None:
                 continue
             if await self._async_send(inverter.dtu_key, inverter.serial, percent):
-                self._remember(inverter.serial, percent)
+                self._remember(inverter.serial, percent, retarget=False)
 
     async def _async_fail(self) -> None:
         """Carry out the failure state; the first run in it acts on the choice."""
@@ -464,6 +548,10 @@ class HouseControl:
                 break
         self._sent.clear()
         self._sent_at.clear()
+        self._models.clear()
+        self._uncapped.clear()
+        self._ceilings.clear()
+        self._wanted.clear()
 
     async def _async_send(self, dtu_key: str, serial: str, percent: int) -> bool:
         """Send one limit; a failure is logged and reported as ``False``."""

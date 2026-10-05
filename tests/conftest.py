@@ -53,6 +53,27 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Let the test Home Assistant load integrations from custom_components."""
 
 
+@pytest.fixture(autouse=True)
+def instant_inverters(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Let the House assume Inverters that follow a limit at once (no latency).
+
+    The simulated Inverters of the older tests do exactly that. Tests marked
+    ``measured_inverters`` keep the House's default slew rate instead, to run
+    against Inverters that ramp as measured.
+    """
+    if request.node.get_closest_marker("measured_inverters"):
+        yield
+        return
+    with (
+        patch(
+            "custom_components.nulleinspeisung.house_control.DEFAULT_LIMIT_SLEW_RATE",
+            1_000_000.0,
+        ),
+        patch("custom_components.nulleinspeisung.limit_model.LATENCY", 0.0),
+    ):
+        yield
+
+
 class Sun:
     """The sun's elevation as the integration sees it; tests move it."""
 
@@ -94,6 +115,9 @@ class SimInverter:
     model: str | None
     devinfo_valid: bool = True
     detail_empty: bool = False
+    available: float | None = None
+    """Power in W the source can deliver. Only used by ``RampSimulator``, which
+    makes ``power`` the smaller of this and the effective limit."""
 
 
 @dataclass
@@ -180,6 +204,8 @@ class DtuNetwork:
         self._post_log: dict[str, list[tuple[str, Any, Any]]] = {}
         self.after_apply: list[Callable[[], None]] = []
         """Called after every ``apply``, which clears all registered mocks."""
+        self.on_limit: list[Callable[[SimInverter, float], None]] = []
+        """Called with the Inverter and the percent of every accepted limit."""
 
     def add(self, dtu: SimDtu) -> None:
         """Add a DTU to the network."""
@@ -291,8 +317,11 @@ class DtuNetwork:
             )
         command = json.loads(data["data"])
         for inverter in dtu.inverters:
-            if inverter.serial == command["serial"] and dtu.reflect_limits:
-                inverter.limit = float(command["limit_value"])
+            if inverter.serial == command["serial"]:
+                for hook in self.on_limit:
+                    hook(inverter, float(command["limit_value"]))
+                if dtu.reflect_limits:
+                    inverter.limit = float(command["limit_value"])
         if dtu.reflect_limits:
             self.apply()
         return AiohttpClientMockResponse(
@@ -404,6 +433,79 @@ class DtuNetwork:
         config = load_fixture("dtu_config.json")
         config["serial"] = dtu.serial
         self.aioclient_mock.get(f"{base_url}/api/dtu/config", json=config)
+
+
+class RampSimulator:
+    """Makes simulated Inverters behave as measured on real ones.
+
+    An Inverter with an ``available`` power keeps an effective limit. After a
+    command was acknowledged (``latency`` seconds) the effective limit moves
+    towards the commanded percent by ``rate`` percent of rated power per second,
+    in both directions; the Inverter delivers the smaller of ``available`` and
+    the effective limit. Inverters without ``available`` stay as they are.
+    ``advance`` moves the simulated time, which a test keeps in step with its
+    controlled clock.
+    """
+
+    def __init__(
+        self, network: DtuNetwork, latency: float = 5.0, rate: float = 0.5
+    ) -> None:
+        """Watch the limit commands of ``network``."""
+        self.network = network
+        self.latency = latency
+        self.rate = rate
+        self.time = 0.0
+        self.effective: dict[str, float] = {}
+        self.active_target: dict[str, float] = {}
+        self.commands: dict[str, tuple[float, float]] = {}
+        """Serial to (acknowledged at, percent) of the command on its way."""
+        network.on_limit.append(self._command)
+        for inverter in self._inverters():
+            self.effective[inverter.serial] = inverter.limit
+            self.active_target[inverter.serial] = inverter.limit
+        self.refresh()
+
+    def _inverters(self) -> list[SimInverter]:
+        return [
+            i
+            for dtu in self.network.dtus.values()
+            for i in dtu.inverters
+            if i.available is not None
+        ]
+
+    def _command(self, inverter: SimInverter, percent: float) -> None:
+        if inverter.available is not None:
+            self.commands[inverter.serial] = (self.time + self.latency, percent)
+
+    def advance(self, seconds: float) -> None:
+        """Let ``seconds`` pass, then show the Inverters' output to the DTUs."""
+        end = self.time + seconds
+        while self.time < end - 1e-9:
+            step = min(0.5, end - self.time)
+            self.time += step
+            for inverter in self._inverters():
+                serial = inverter.serial
+                due = self.commands.get(serial)
+                if due is not None and self.time >= due[0] - 1e-9:
+                    self.active_target[serial] = due[1]
+                    del self.commands[serial]
+                goal = self.active_target.get(serial, inverter.limit)
+                now = self.effective.get(serial, inverter.limit)
+                move = self.rate * step
+                self.effective[serial] = (
+                    min(now + move, goal) if goal >= now else max(now - move, goal)
+                )
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Recompute every output and register it with the mock client."""
+        for inverter in self._inverters():
+            assert inverter.available is not None
+            effective = self.effective.setdefault(inverter.serial, inverter.limit)
+            inverter.power = min(
+                inverter.available, effective / 100 * (inverter.rated_power or 0)
+            )
+        self.network.apply()
 
 
 @pytest.fixture

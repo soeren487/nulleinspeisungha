@@ -347,3 +347,29 @@ async def test_usable_turns_on_when_the_history_is_sufficient(
     await run(hass, freezer, 15 * 60)
     assert read("binary_sensor", "pv_forecast_usable") == "on"
     assert read("sensor", "pv_forecast_history_days") == "14"
+
+
+async def test_limits_held_down_only_by_the_response_reserve_are_not_curtailing(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """With the reserve on and no export the quarter-hour still counts."""
+    _, house = await setup(
+        hass, dtu_network, open_meteo, freezer, hass_storage, prepared_history()
+    )
+    hass.states.async_set(METER, "0", {"unit_of_measurement": "W"})
+    house.control.response_reserve = 10
+    await house.control.async_set_curtailment(True)
+    await hass.async_block_till_done()
+    await run(hass, freezer, 14 * 60 + 50)
+    sent = [value for _, _, value in dtu_network.limits()]
+    assert sent
+    assert all(value < 100 for value in sent)
+    assert not house.control.curtailing
+    await run(hass, freezer, 10)
+    [record] = house.forecast.history[-1:]
+    assert record.start == START
+    assert record.curtailed is False
