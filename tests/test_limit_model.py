@@ -8,6 +8,7 @@ from custom_components.nulleinspeisung.limit_model import (
     LATENCY,
     LimitState,
     ceiling,
+    is_limited,
     next_ceiling,
 )
 
@@ -116,6 +117,25 @@ def test_a_raising_that_arrived_has_nothing_pending() -> None:
     assert RAISING.pending_change(LATENCY + 1000, 1000, 400, RATE) == 0
 
 
+def test_a_reading_from_before_the_arrival_still_has_the_change_pending() -> None:
+    """The effective limit reached 20 % at 165 s; a reading from 40 s before
+    the time asked about still shows the output on its way down."""
+    arrived = LATENCY + 160
+    assert LOWERING.pending_change(arrived + 20, 1000, 300, RATE) == 0
+    assert LOWERING.pending_change(arrived + 20, 1000, 300, RATE, reading_age=40) == (
+        pytest.approx(-100)
+    )
+    assert LOWERING.pending_change(arrived + 20, 1000, 200, RATE, reading_age=40) == 0
+
+
+def test_a_reading_from_before_the_arrival_of_a_raising_is_not_final() -> None:
+    arrived = LATENCY + 100
+    assert RAISING.pending_change(arrived + 20, 1000, 650, RATE) == 0
+    assert RAISING.pending_change(arrived + 20, 1000, 650, RATE, reading_age=40) == (
+        pytest.approx(50)
+    )
+
+
 # -- the ceiling -------------------------------------------------------------
 
 
@@ -159,3 +179,11 @@ def test_a_reading_older_than_the_ramp_still_counts_as_limited() -> None:
     assert state.pending_change(now, 1000, 200, RATE, reading_age=20) == (
         pytest.approx(500)
     )
+
+
+def test_limited_right_now_follows_the_reading() -> None:
+    state = LimitState(40, 40, 0)  # 400 W of 1000 W
+    assert is_limited(state, 100, 1000, 399, RATE) is True
+    assert is_limited(state, 100, 1000, 385, RATE) is True  # within the margin
+    assert is_limited(state, 100, 1000, 300, RATE) is False
+    assert is_limited(state, 100, 1000, None, RATE) is None
