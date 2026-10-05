@@ -8,7 +8,7 @@
 
 - [x] Response time from acknowledgement to changed output is measured for an HM and for the HMS Inverter and recorded in the wiki
 - [ ] The Grid Meter sign of both Houses is verified and set correctly
-- [ ] The Garage DTU's Inverter assignment is recorded in the wiki
+- [x] The Garage DTU's Inverter assignment is recorded in the wiki
 - [x] The default Update Interval is confirmed or changed in the spec
 
 ## Comments
@@ -20,3 +20,5 @@
 2026-10-05, midday: Third and fourth sessions with the owner's approval for all Inverters. Measured an HM-1500-4T on each of two DTUs, the HMS-1600-4T and an HM-600-2T with 2021 firmware: all follow a limit within seconds. Only Inverters with firmware builds of 2020 slew slowly. Details in the wiki. Follow-up: ticket 23 (slew rate per Inverter). The Update Interval default of 15 s stays: DTUs read each Inverter every 5 to 20 s, so a faster loop would not see more.
 
 Not established: which House the four HM-600 of the shared DTU feed. An experiment (lower a pair, compare both Houses' balance of AC Battery power minus Grid Power read from the GX devices) was inconclusive: the balances drifted by several hundred watts from load and sun, more than the 450 to 580 W removed. The first run of that experiment recorded nothing because of a bug in the measuring script. Waiting for the owner to confirm the assignment and the sign of each House's Grid Meter sensor in Home Assistant.
+
+2026-10-05: The owner stated the assignment of every Inverter to its House; it is recorded in the private installation inventory. One Inverter of the shared DTU belongs to the other House than its name suggests, and one Inverter is to be left unassigned. Only the sign of each House's Grid Meter sensor is still to be confirmed by the owner.
