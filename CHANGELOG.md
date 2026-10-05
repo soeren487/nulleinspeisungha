@@ -1,0 +1,32 @@
+# Changelog
+
+## 0.2.0
+
+First version with the control features. Everything that sets inverter limits is off until you switch it on.
+
+### New
+
+- **Curtailment.** Per House, a switch that regulates the inverters so that grid power stays at the feed-in setpoint. Settings: feed-in setpoint, update interval, tolerance band, limit floor, behaviour on failure, limit slew rate and response reserve.
+- **Two inverter groups.** Battery-backed inverters are lowered first and raised last, and are held to what the house consumes.
+- **AC battery.** A House can be given a Victron GX by its address. The integration reads charge level, battery power and settings, and Curtailment leaves room for what the battery can still take. Nothing is written to the GX.
+- **Tibber prices.** One token in the integration's options, a Tibber home per House, and sensors for the current price and price level.
+- **PV forecast.** Per House, from Open-Meteo irradiance and the House's own production history. Usable after 14 days of data.
+- **Expected load.** Per House, learned from its own consumption per quarter-hour. Learned after 7 days; until then a fallback daily consumption is used.
+- **Failure handling.** When the grid meter delivers no data or no DTU of a House answers, the House holds its limits or, if chosen, sets its inverters to 100 %, and raises a repair issue.
+- **Stuck DTU detection uses the Houses.** Battery-backed inverters are ignored, and a DTU is also restarted when another DTU of the same House is producing while it delivers no data.
+
+### Changed
+
+- The House form has a further step for the AC battery. Existing Houses keep working; open a House's settings once to add a battery or a Tibber home.
+
+### Good to know
+
+- **Inverters with firmware from 2020 follow a limit slowly**, at about 0.5 % of rated power per second. From 100 % it can take minutes before their output falls. A response reserve of about 10 % keeps their limit close above the output so that Curtailment takes effect in seconds. Inverters with later firmware respond within seconds and need no reserve.
+- The limit slew rate is one setting per House. A House that mixes slow and fast inverters is not handled well yet.
+- Curtailment has been tested against simulated devices built from measurements, not yet in continuous operation on a real installation. Start with one House and watch its control state.
+- Grid charging and the discharge block are not included yet.
+- Requires Home Assistant 2026.9 or later. Restart Home Assistant after updating.
+
+## 0.1.0
+
+- The integration can be added, DTUs connected, and their inverters shown.
