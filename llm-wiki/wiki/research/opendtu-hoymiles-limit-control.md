@@ -9,7 +9,7 @@ stale_after: 2027-04-04T00:00:00Z
 sources:
   - id: own-measurement
     resource: measurement on the owner's installation, 2026-10-05
-    title: Limit response measured on one HM-1200-4T
+    title: Limit response measured on an HM-1200-4T and two HM-600-2T
   - id: opendtu-src
     resource: https://github.com/tbnobody/OpenDTU/tree/8da432d52f33a7598deb93550df2115b8e5bb700
     title: tbnobody/OpenDTU source at 8da432d (tag v26.9.28), src/WebApi_*.cpp and lib/Hoymiles
@@ -282,28 +282,43 @@ After a reboot: wait at least 5 minutes before judging again (limit read-back ta
 Common ground: non-persistent limits only, exclusive control of the governed inverters, never command an unreachable inverter, and wait for the effect of one change before computing the next.
 
 
-# Measured on a real inverter
+# Measured on real inverters
 
-Measured on 2026-10-05 at night on one HM-1200-4T (inverter firmware build 2020-06-24) behind a DC battery delivering a steady 290 W, through OpenDTU v26.3.30, by setting non-persistent limits and reading the AC power every 1.5 to 2 s. One inverter, one night, fed by a battery and not by panels: treat the numbers as indicative.[^own-measurement]
+Two sessions on the owner's installation through OpenDTU v26.3.30, setting non-persistent limits and reading AC power every 2 s.[^own-measurement]
 
-| What | Result |
-| --- | --- |
-| Acknowledgement (`limit_set_status` from `Pending` to `Ok`) | 2 to 5 s after the POST |
-| Lowering after several minutes at 100 % ("cold") | No change in output for 155 to 162 s, then a ramp down. Seen three times: relative limit 10 % (155 s), absolute limit 200 W (158 s), and once more with a relative limit where 75 s of watching showed nothing |
-| Lowering shortly after an earlier limit change ("warm") | Output started to fall within 6 to 10 s. Seen with absolute limits sent 1 to 5 minutes after the previous change |
-| Raising | Output started to rise within about 7 s, with relative and with absolute limits, cold or warm |
-| Ramp, both directions | About 6 W per second, which is 0.5 % of rated power per second: 430 W to 155 W took about 47 s |
-| Reported limit | After an absolute limit OpenDTU reports both forms, for example 99.6 W and 8.3 % |
-| Returning to full | An absolute limit equal to the rated power is reported as 100 % |
+- **Night, 2026-10-05:** one HM-1200-4T fed by a DC battery delivering a steady 290 W.
+- **Day, 2026-10-05:** two panel-fed HM-600-2T producing about 180 W each, given the same target at the same moment, one as a relative limit and one as an absolute limit, with a third inverter as untouched reference. On this DTU each inverter is read only about every 20 s, so times are known to within about 20 s.
 
-What this does and does not show:
+| Situation | Relative limit | Absolute limit |
+| --- | --- | --- |
+| HM-600, lowering to 10 % after a morning at 100 % | output unchanged until 150 to 170 s | output unchanged until 150 to 172 s |
+| HM-600, lowering again about 70 s after a raise to 100 % was sent | started at about 50 s | started at about 50 s |
+| HM-600, same with the types swapped between the two inverters | started at 25 to 45 s | started at 25 to 60 s |
+| HM-600, raising from 10 % | started within about 15 s | started within about 15 s |
+| HM-1200, lowering after a long time at 100 % | 155 s | 158 s |
+| HM-1200, lowering while its output was still rising after a release | not measured | 6 to 10 s |
+| Ramp once the output moves, both directions | about 0.5 % of rated power per second (3 W/s on the HM-600, 6 W/s on the HM-1200) | the same |
+| Acknowledgement (`limit_set_status` `Ok`) | 2 to 5 s | 2 to 5 s |
 
-- **The delay depends on history, not on the limit type.** A first reading of these measurements said "absolute is fast, relative is slow"; a repeat showed an absolute limit just as slow when the inverter had been at 100 % for a while. Relative and absolute were never compared under the same conditions when warm, so no advantage of either form is established.
-- **The cause of the roughly 160 s delay is not known.** The inverter is fed by a DC battery that regulates its own output power; the delay may come from that combination and not from the inverter alone. Panel-fed inverters are widely reported to follow limits within seconds (forum reports, not verified here).
-- **The output follows a ramp, not a step.** A change of several hundred watts on one inverter takes most of a minute. A loop that runs every 15 s and reacts to the full remaining deviation each time will overshoot unless it accounts for the change still in flight.
-- **Side effect behind a DC battery:** after a limit was released the inverter overshot, once to about 580 W, for roughly two minutes before settling back to 295 W.
+## What explains all of it
 
-Not measured: an HM-600 or HM-1500 fed by panels, and the HMS-1600 (different radio). That measurement decides how Curtailment has to treat delay and ramp.
+**The inverter does not jump to a new limit. It moves its effective limit towards the target at about 0.5 % of rated power per second, in both directions, and the output is the smaller of that effective limit and what the source delivers.** This is an inference from the measurements, not a documented behaviour, but it reproduces every row:
+
+- At 100 % with the output at 30 % of rated power, the effective limit has to travel 70 points before it touches the output: 70 / 0.5 = 140 s, plus the acknowledgement. Measured: 150 to 170 s.
+- The HM-1200 at 24 % of rated power: 76 / 0.5 = 152 s. Measured: 155 and 158 s.
+- Seventy seconds after a raise from 10 %, the effective limit has only reached about 45 %; lowering from there to an output at 31 % takes about 28 s. Measured: 25 to 50 s.
+- While the output is still rising after a release, the effective limit is the output, so a lower target bites at once. Measured: 6 to 10 s.
+- Raising always shows at once, because a limited inverter's output is its effective limit.
+
+## Conclusions for the control loop
+
+- **Relative and absolute limits behave the same.** In the side-by-side test no difference appeared in any phase. An earlier reading of the night session, "absolute is fast, relative is slow", compared commands sent in different states.
+- **How fast a limit bites depends on how far the effective limit is above the output.** An inverter left at 100 % on a dull day needs minutes; one whose limit is kept a little above its output needs seconds.
+- **The loop has to model the effective limit.** Per inverter it can be tracked exactly: it moves towards the last target at 0.5 % of rated power per second. With it the House knows what a pending change will still do, and does not react twice.
+- **Keeping a reserve is a trade-off.** Holding each limit a fixed margin above the output makes Curtailment respond in seconds, but when the sun comes out the output can only rise as fast as the House raises the limit.
+- **Behind a DC battery** the inverter overshot after a release, once to about 580 W, for roughly two minutes before settling at 295 W.
+
+Not measured: the HM-1500 and the HMS-1600 (different radio); the rate is assumed to be the same share of rated power until measured.
 
 
 [^opendtu-src]: tbnobody/OpenDTU source at 8da432d (tag v26.9.28)
@@ -326,4 +341,4 @@ Not measured: an HM-600 or HM-1500 fed by panels, and the HMS-1600 (different ra
 [^hzx-i211]: HoymilesZeroExport issue 211 (user reports)
 [^ahoy-manual]: AhoyDTU user manual
 [^forum-eeprom]: akkudoktor.net forum thread (anecdotal)
-[^own-measurement]: Limit response measured on one HM-1200-4T
+[^own-measurement]: Limit response measured on an HM-1200-4T and two HM-600-2T

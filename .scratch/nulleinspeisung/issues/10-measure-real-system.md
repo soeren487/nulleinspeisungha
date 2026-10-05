@@ -14,3 +14,5 @@
 ## Comments
 
 2026-10-05: First session, at night, on one Battery-backed HM-1200-4T with the owner's approval. Result in the wiki research page on limit control: lowering starts about 160 s after the command when the Inverter had been at 100 % for a while, and within 6 to 10 s shortly after an earlier change, independent of relative or absolute; raising starts within about 7 s; the output ramps at about 0.5 % of rated power per second. Follow-ups: ticket 20 (absolute limits, held) and ticket 21 (account for delay and ramp). Still open here: a panel-fed HM and the HMS by day, the Grid Meter signs, the Garage assignment, and the Update Interval default.
+
+2026-10-05, day: Second session with the owner's approval on two panel-fed HM-600-2T of the Garage DTU, relative against absolute side by side. Result in the wiki: no difference between the two forms; the Inverter moves its effective limit at about 0.5 % of rated power per second, which explains the delays of the first session. Still open: the HM-1500 and the HMS, the Grid Meter signs, the Garage assignment.

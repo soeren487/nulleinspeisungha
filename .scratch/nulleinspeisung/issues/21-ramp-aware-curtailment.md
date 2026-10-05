@@ -1,12 +1,13 @@
 # 21: Account for the Inverters' ramp in Curtailment
 
-**What to build:** After a limit change an Inverter's output moves at roughly 0.5 % of its rated power per second, so a large change takes most of a minute. On the Battery-backed Inverter that was measured, the first lowering after a while at 100 % did not start for about 160 s. Curtailment must not react again to the part of a change that is still on its way, or it overshoots and swings. The House counts the change still in flight when it decides the next step.
+**What to build:** Measurements show that an Inverter does not jump to a new limit: it moves its effective limit towards the target at about 0.5 % of rated power per second, in both directions, and delivers the smaller of that and what its source provides. An Inverter left at 100 % while producing 30 % therefore needs about two and a half minutes before a lower limit touches its output. Curtailment must model that effective limit per Inverter, so that it knows what a pending change will still do and does not react to it twice, and it should be able to keep limits a configurable reserve above the output so that lowering takes effect in seconds.
 
-**Blocked by:** 10 (Measure Inverter response and verify signs on the real system)
+**Blocked by:** None (can start immediately)
 
-**Status:** needs-triage
+**Status:** ready-for-agent
 
-- [ ] The ramp rate is confirmed by day on a panel-fed HM Inverter and on the HMS Inverter (ticket 10)
-- [ ] The control rule for a change in flight is designed and recorded in the spec
-- [ ] A lowering step is not repeated while the earlier one is still ramping, or has not started yet
-- [ ] A simulated Inverter that ramps shows no overshoot beyond the tolerance band in the end-to-end tests
+- [ ] The House tracks an effective limit per Inverter that moves towards the last target at a configurable rate, default 0.5 % of rated power per second
+- [ ] A step counts the change still on its way: a lowering or raising already commanded is not commanded again
+- [ ] A House setting keeps the limits a reserve above the output while not curtailing (default off), so that a lower limit bites within seconds
+- [ ] With a simulated Inverter that behaves as measured, a load drop is corrected without overshoot beyond the tolerance band, from 100 % and from a reserve
+- [ ] The rule is recorded in the spec

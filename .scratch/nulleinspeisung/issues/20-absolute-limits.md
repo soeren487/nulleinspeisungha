@@ -15,3 +15,5 @@
 ## Comments
 
 2026-10-05: Implemented on branch `ticket-20-absolute-limits` (519 tests pass) and verified against a real Inverter, but not merged. The repeat measurement did not confirm the reason for this ticket: an absolute limit was as slow as a relative one (about 160 s) when the Inverter had been at 100 % for a while, and both act within seconds shortly after an earlier change. Waiting for a daytime measurement on a panel-fed Inverter and the owner's decision.
+
+2026-10-05, later: A side-by-side daytime test on two panel-fed HM-600 (one relative, one absolute, same target, same moment, types swapped once) showed no difference in any phase. The reason for this ticket does not exist. Recommendation: close as wontfix and delete the branch; the owner decides.
