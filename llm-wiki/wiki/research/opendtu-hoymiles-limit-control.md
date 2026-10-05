@@ -284,26 +284,26 @@ Common ground: non-persistent limits only, exclusive control of the governed inv
 
 # Measured on a real inverter
 
-Measured on 2026-10-05 at night on one HM-1200-4T (inverter firmware build 2020-06-24) behind a DC battery delivering a steady 290 W, through OpenDTU v26.3.30, by setting non-persistent limits and reading the AC power every 1.5 s. One inverter, one night: treat the numbers as indicative.[^own-measurement]
+Measured on 2026-10-05 at night on one HM-1200-4T (inverter firmware build 2020-06-24) behind a DC battery delivering a steady 290 W, through OpenDTU v26.3.30, by setting non-persistent limits and reading the AC power every 1.5 to 2 s. One inverter, one night, fed by a battery and not by panels: treat the numbers as indicative.[^own-measurement]
 
 | What | Result |
 | --- | --- |
 | Acknowledgement (`limit_set_status` from `Pending` to `Ok`) | 2 to 5 s after the POST |
-| Relative non-persistent limit (type 1), lowering 100 % to 10 % | No change in output for about 155 s, then a ramp down over about 30 s to the target. A first attempt watched for only 75 s saw no effect at all |
-| Relative non-persistent limit, raising to 100 % | Output started to rise within about 6 s |
-| Absolute non-persistent limit (type 0), lowering | Output started to fall 6 to 10 s after the POST |
-| Absolute non-persistent limit, raising | Output started to rise within about 7 s |
+| Lowering after several minutes at 100 % ("cold") | No change in output for 155 to 162 s, then a ramp down. Seen three times: relative limit 10 % (155 s), absolute limit 200 W (158 s), and once more with a relative limit where 75 s of watching showed nothing |
+| Lowering shortly after an earlier limit change ("warm") | Output started to fall within 6 to 10 s. Seen with absolute limits sent 1 to 5 minutes after the previous change |
+| Raising | Output started to rise within about 7 s, with relative and with absolute limits, cold or warm |
 | Ramp, both directions | About 6 W per second, which is 0.5 % of rated power per second: 430 W to 155 W took about 47 s |
 | Reported limit | After an absolute limit OpenDTU reports both forms, for example 99.6 W and 8.3 % |
-| Returning to full | Absolute limit equal to the rated power is reported as 100 % |
+| Returning to full | An absolute limit equal to the rated power is reported as 100 % |
 
-Conclusions for the control loop:
+What this does and does not show:
 
-- **Use absolute non-persistent limits.** Lowering with a relative limit was delayed by minutes; with an absolute limit it started within seconds. The integration computes watts from its percent and the inverter's rated power.
+- **The delay depends on history, not on the limit type.** A first reading of these measurements said "absolute is fast, relative is slow"; a repeat showed an absolute limit just as slow when the inverter had been at 100 % for a while. Relative and absolute were never compared under the same conditions when warm, so no advantage of either form is established.
+- **The cause of the roughly 160 s delay is not known.** The inverter is fed by a DC battery that regulates its own output power; the delay may come from that combination and not from the inverter alone. Panel-fed inverters are widely reported to follow limits within seconds (forum reports, not verified here).
 - **The output follows a ramp, not a step.** A change of several hundred watts on one inverter takes most of a minute. A loop that runs every 15 s and reacts to the full remaining deviation each time will overshoot unless it accounts for the change still in flight.
-- **Side effect behind a DC battery:** after the limit was released the inverter overshot to about 580 W for roughly two minutes before settling back to 295 W.
+- **Side effect behind a DC battery:** after a limit was released the inverter overshot, once to about 580 W, for roughly two minutes before settling back to 295 W.
 
-Not measured: an HM-600 or HM-1500 fed by panels, and the HMS-1600 (different radio).
+Not measured: an HM-600 or HM-1500 fed by panels, and the HMS-1600 (different radio). That measurement decides how Curtailment has to treat delay and ramp.
 
 
 [^opendtu-src]: tbnobody/OpenDTU source at 8da432d (tag v26.9.28)
