@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-05
+* **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): measured the HM-1500, the HMS-1600 and an HM-600 with newer firmware. They follow a limit within seconds; only inverters with 2020 firmware slew slowly.
 * **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): daytime side-by-side measurement on two panel-fed HM-600. Relative and absolute limits behave the same; the inverter moves its effective limit at about 0.5 % of rated power per second, which explains the delays.
 * **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): corrected the measurement section. A repeat showed the delay depends on whether the inverter was limited recently, not on relative versus absolute.
 * **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): added the limit response measured on a real HM-1200-4T. Absolute limits act within seconds, relative lowering took minutes, output ramps at about 0.5 % of rated power per second.
