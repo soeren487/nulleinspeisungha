@@ -267,3 +267,94 @@ def test_no_headroom_behaves_as_before() -> None:
     for grid in (-200.0, -10.0, 0.0, 150.0):
         inverter = _inv(production=400, limit=40)
         assert _decide(grid, inverter) == _decide(grid, inverter, battery_headroom=0.0)
+
+
+# -- pending changes -----------------------------------------------------------
+
+
+def _pending(
+    pending: float, production: float | None = 1000, limit: float = 100
+) -> ControllableInverter:
+    return ControllableInverter(
+        rated_power=1000, production=production, limit=limit, pending_change=pending
+    )
+
+
+def _full(grid: float, pv, bb=(), headroom: float = 0.0, consumption=None):
+    return decide_house(grid, 0.0, 30.0, 5.0, pv, list(bb), consumption, headroom)
+
+
+def test_a_pending_lowering_cancels_an_equal_export() -> None:
+    decision = _full(-400, [_pending(-400)])
+    assert decision.state is ControlState.HOLDING
+    assert decision.pv.allowed_power == pytest.approx(1000)
+    assert decision.corrected_deviation == pytest.approx(0)
+
+
+def test_a_pending_raising_cancels_an_equal_import() -> None:
+    decision = _full(400, [_pending(400, production=300, limit=30)])
+    assert decision.state is ControlState.HOLDING
+    assert not decision.pv.changed
+    assert decision.pv.allowed_power == pytest.approx(300)
+
+
+def test_a_partial_pending_change_leaves_the_rest() -> None:
+    decision = _full(-400, [_pending(-250)])
+    assert decision.state is ControlState.LOWERING
+    assert decision.corrected_deviation == pytest.approx(-150)
+    assert decision.pv.allowed_power == pytest.approx(850)
+    raising = _full(400, [_pending(250, production=300, limit=30)])
+    assert raising.state is ControlState.RAISING
+    assert raising.pv.allowed_power == pytest.approx(450)
+
+
+def test_pending_changes_of_both_groups_are_summed() -> None:
+    decision = _full(-400, [_pending(-150)], [_pending(-250)])
+    assert decision.state is ControlState.HOLDING
+    assert decision.corrected_deviation == pytest.approx(0)
+
+
+def test_a_pending_change_never_reverses_the_deviation() -> None:
+    """Readings older than the Grid Power must not turn an export into a raise."""
+    exporting = _full(-100, [_pending(-500)])
+    assert exporting.state is ControlState.HOLDING
+    assert exporting.corrected_deviation == 0
+    importing = _full(100, [_pending(500, production=300, limit=30)])
+    assert importing.state is ControlState.HOLDING
+    assert importing.corrected_deviation == 0
+
+
+def test_the_band_test_uses_the_corrected_deviation() -> None:
+    """An export of 100 W is beyond the band, but not with 90 W on its way."""
+    assert _full(-100, [_pending(0)]).state is ControlState.LOWERING
+    assert _full(-100, [_pending(-90)]).state is ControlState.HOLDING
+
+
+def test_headroom_counts_unless_the_corrected_deviation_exports_beyond_the_band() -> (
+    None
+):
+    """400 W export with the same lowering on its way is no export: headroom counts."""
+    waiting = _full(-400, [_pending(-400)], headroom=500)
+    assert waiting.state is ControlState.RAISING
+    assert waiting.pv.allowed_power == pytest.approx(1000)  # at most the rated power
+    assert waiting.corrected_deviation == pytest.approx(0)
+    # Without the lowering on its way the export is beyond the band: no headroom.
+    exporting = _full(-400, [_pending(0)], headroom=500)
+    assert exporting.state is ControlState.LOWERING
+    assert exporting.corrected_deviation == pytest.approx(-400)
+
+
+def test_the_corrected_deviation_without_pending_is_the_deviation() -> None:
+    assert _full(-400, [_pending(0)]).corrected_deviation == pytest.approx(-400)
+    assert _full(120, [_pending(0)]).corrected_deviation == pytest.approx(120)
+    assert decide_house(
+        -50, 0.0, 30.0, 5.0, [], [], None
+    ).corrected_deviation == pytest.approx(-50)
+
+
+@pytest.mark.parametrize("grid", [-800.0, -100.0, -20.0, 0.0, 40.0, 700.0])
+def test_without_pending_changes_the_result_is_the_same_as_ever(grid: float) -> None:
+    plain = _decide(grid, _inv(production=600, limit=70))
+    explicit = _full(grid, [_pending(0, production=600, limit=70)])
+    assert explicit.state is plain.state
+    assert explicit.pv.allowed_power == pytest.approx(plain.allowed_power)
