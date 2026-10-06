@@ -13,7 +13,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .const import CONTROL_MODEL, DOMAIN, HOUSE_MODEL, INVERTER_MAKER
+from .const import CHARGING_MODEL, CONTROL_MODEL, DOMAIN, HOUSE_MODEL, INVERTER_MAKER
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
 from .house import House
@@ -146,6 +146,18 @@ def control_device_info(house: House) -> DeviceInfo:
     )
 
 
+def charging_device_info(house: House) -> DeviceInfo:
+    """Device description of the Grid Charging of the House, below the House."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{house.config.unique_id}_charging")},
+        via_device=(DOMAIN, house.config.unique_id),
+        translation_key="grid_charging",
+        translation_placeholders={"house": house.config.name},
+        manufacturer="Nulleinspeisung",
+        model=CHARGING_MODEL,
+    )
+
+
 class HouseEntity(Entity):
     """An entity of a House, shown on the House's device."""
 
@@ -183,6 +195,27 @@ class ControlEntity(HouseEntity):
         """Create the entity ``key`` of the control of this House."""
         super().__init__(house, key)
         self.move_to_control_device(domain, object_id or key)
+
+
+class ChargingEntity(HouseEntity):
+    """An entity of the Grid Charging of a House, shown on its own device."""
+
+    def __init__(self, house: House, key: str, domain: str) -> None:
+        """Create the entity ``key`` of the Grid Charging of this House.
+
+        The device name would put "grid charging" into the entity id; the id is
+        pinned to the House name and the key instead.
+        """
+        super().__init__(house, key)
+        assert house.grid_charging is not None
+        self.charging = house.grid_charging
+        self._attr_device_info = charging_device_info(house)
+        self.entity_id = f"{domain}.{slugify(house.config.name)}_{key}"
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever the plan or the state may have changed."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self.charging.async_add_listener(self._handle_change))
 
 
 def setup_house_entities(

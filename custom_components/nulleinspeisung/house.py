@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
 
 from .battery_gateway import BatteryGateway, BatteryState
-from .battery_overrides import OverrideRelease, WantedOverrides
+from .battery_overrides import OverrideControl, WantedOverrides
 from .battery_priority import battery_headroom
 from .battery_watch import BatteryWatch
 from .const import (
@@ -42,6 +42,7 @@ from .const import (
 from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
 from .expected_load import ExpectedLoad
+from .grid_charging import GridCharging
 from .grid_publisher import GridPublisher
 from .house_control import HouseControl
 from .house_prices import HousePrices
@@ -178,14 +179,21 @@ class House:
         self.control = HouseControl(self)
         self.battery_watch = BatteryWatch(self)
         self.wanted_overrides = WantedOverrides()
-        """The GX overrides the integration wants; later tickets fill it in."""
-        self.override_release = OverrideRelease(self)
+        """The GX overrides the integration wants; Grid Charging fills the setpoint."""
+        self.override_control = OverrideControl(self)
         self.grid_publisher: GridPublisher | None = (
             GridPublisher(self, config.grid_meter_topic)
             if gateway is not None and config.grid_meter_topic
             else None
         )
         """Publishes Grid Power to the AC Battery; ``None`` without battery or topic."""
+        self.grid_charging: GridCharging | None = (
+            GridCharging(self)
+            if gateway is not None and prices is not None and config.battery_capacity
+            else None
+        )
+        """Charges the AC Battery in cheap quarter-hours; ``None`` without an AC
+        Battery, Tibber prices or a usable capacity."""
         self.forecast = forecast
         """The House's PV Forecast; ``None`` without PV Inverters.
 

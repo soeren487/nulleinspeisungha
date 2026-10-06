@@ -160,6 +160,9 @@
   "device": {
     "inverter_control": {
       "name": "{house} Inverter control"
+    },
+    "grid_charging": {
+      "name": "{house} Grid charging"
     }
   },
   "entity": {
@@ -181,6 +184,9 @@
       },
       "expected_load_learned": {
         "name": "Expected Load learned"
+      },
+      "charging_blocked_by_efficiency": {
+        "name": "Grid charging blocked by efficiency"
       }
     },
     "sensor": {
@@ -286,6 +292,33 @@
       },
       "reported_grid_power": {
         "name": "Reported Grid Power"
+      },
+      "grid_charging_state": {
+        "name": "Grid charging state",
+        "state": {
+          "off": "Off",
+          "not_in_control": "Not in control",
+          "battery_unavailable": "Battery unavailable",
+          "dynamic_ess_active": "Dynamic ESS active",
+          "no_prices": "No prices",
+          "target_reached": "Target reached",
+          "no_qualifying_slot": "No qualifying quarter-hour",
+          "blocked_by_efficiency": "Blocked by efficiency",
+          "waiting": "Waiting",
+          "charging": "Charging"
+        }
+      },
+      "next_charging_start": {
+        "name": "Next charging start"
+      },
+      "energy_to_buy": {
+        "name": "Energy to buy"
+      },
+      "energy_missing": {
+        "name": "Energy missing"
+      },
+      "reference_price": {
+        "name": "Reference price"
       }
     },
     "button": {
@@ -302,6 +335,12 @@
       },
       "publish_grid_power": {
         "name": "Send grid power to Victron"
+      },
+      "grid_charging": {
+        "name": "Charge from grid"
+      },
+      "ignore_efficiency": {
+        "name": "Ignore efficiency check"
       }
     },
     "number": {
@@ -328,6 +367,12 @@
       },
       "fallback_daily_consumption": {
         "name": "Fallback daily consumption"
+      },
+      "charge_target": {
+        "name": "Charge target"
+      },
+      "battery_efficiency": {
+        "name": "AC battery efficiency"
       }
     },
     "select": {
@@ -336,6 +381,14 @@
         "state": {
           "hold": "Hold last limits",
           "full": "Set all to 100 %"
+        }
+      },
+      "charge_price_levels": {
+        "name": "Charge at price level",
+        "state": {
+          "very_cheap": "Very cheap only",
+          "cheap_and_below": "Cheap and very cheap",
+          "normal_and_below": "Normal and cheaper"
         }
       }
     }

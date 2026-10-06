@@ -290,6 +290,7 @@ async def test_left_over_overrides_are_released_once(
 ) -> None:
     """One release per override, not repeated while waiting for the GX."""
     gx = SimGx()
+    gx.accepts_writes = False  # the GX stays silent: no second write meanwhile
     gx.topics["hub4/0/Overrides/Setpoint"] = '{"value": -150}'
     gx.topics["hub4/0/Overrides/MaxDischargePower"] = '{"value": 0}'
     await _home(hass, dtu_network, gx)

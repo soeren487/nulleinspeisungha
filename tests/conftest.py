@@ -799,6 +799,9 @@ def _topic_matches(topic_filter: str, topic: str) -> bool:
     )
 
 
+OVERRIDE_PATHS = ("hub4/0/Overrides/Setpoint", "hub4/0/Overrides/MaxDischargePower")
+"""The values of the GX that the integration writes."""
+
 HEARTBEAT_SECONDS = 3.0
 """A GX with the keepalive on publishes its heartbeat this often."""
 
@@ -872,6 +875,10 @@ class SimGx:
         self.down = False
         self.dead = False
         """A dead GX is connected but sends nothing: no value, no heartbeat."""
+        self.accepts_writes = True
+        """Whether a write to an override is applied and reported back, as a real
+        GX does; a test turns it off to see what the integration does while the GX
+        stays silent."""
         self.clients: list[FakeTransport] = []
         self.published: list[tuple[str, bytes]] = []
         """Everything the integration published, in order."""
@@ -979,6 +986,18 @@ class SimGx:
         if topic == f"R/{self.portal_id}/keepalive" and payload == b"":
             for path in list(self.topics):
                 self._deliver(path, only=client)
+        prefix = f"W/{self.portal_id}/"
+        if self.accepts_writes and topic.startswith(prefix):
+            self._apply_write(topic[len(prefix) :], payload)
+
+    def _apply_write(self, path: str, payload: bytes) -> None:
+        """Apply a write to one of the two overrides and report it back."""
+        if path not in OVERRIDE_PATHS:
+            return
+        value = json.loads(payload)["value"]
+        if path.endswith("MaxDischargePower") and value == -1:
+            value = None  # the way to release this override
+        self.set(path, value)
 
     def _payload(self, path: str) -> bytes:
         return self.topics[path].encode()
