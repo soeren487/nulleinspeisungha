@@ -293,10 +293,10 @@
         "name": "Automatic restart"
       },
       "curtailment": {
-        "name": "Curtailment"
+        "name": "Regulate feed-in"
       },
       "publish_grid_power": {
-        "name": "Publish Grid Power"
+        "name": "Send grid power to Victron"
       }
     },
     "number": {
@@ -398,7 +398,7 @@
     },
     "mqtt_needed": {
       "title": "MQTT integration needed for House {house}",
-      "description": "Publishing the Grid Power of {house} is switched on, but the MQTT integration of Home Assistant is not set up, so nothing is published. Set it up or switch publishing off."
+      "description": "The switch \"Send grid power to Victron\" of {house} is on, but the MQTT integration of Home Assistant is not set up, so nothing is sent. Set it up or switch \"Send grid power to Victron\" off."
     },
     "other_grid_publisher": {
       "title": "Another system also publishes the grid value for House {house}",

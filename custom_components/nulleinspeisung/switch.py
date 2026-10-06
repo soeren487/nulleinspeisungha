@@ -6,7 +6,7 @@ from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import STATE_OFF, STATE_ON, EntityCategory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
@@ -37,6 +37,13 @@ async def async_setup_entry(
             ),
         ],
     )
+
+
+def _restored_on(last: State | None) -> bool:
+    """Whether a House switch is on: as it was left, and on if nothing is stored."""
+    if last is None or last.state not in (STATE_ON, STATE_OFF):
+        return True
+    return last.state == STATE_ON
 
 
 class DtuAutomaticRestartSwitch(DtuEntity, SwitchEntity, RestoreEntity):
@@ -84,18 +91,23 @@ class CurtailmentSwitch(HouseEntity, SwitchEntity, RestoreEntity):
 
     _attr_translation_key = "curtailment"
 
+    @property
+    def suggested_object_id(self) -> str:
+        """Keep the entity id of a new House as it was before the rename."""
+        return "Curtailment"
+
     def __init__(self, house: House) -> None:
         """Create the switch."""
         super().__init__(house, "curtailment")
 
     async def async_added_to_hass(self) -> None:
-        """Restore the position the owner left it in; off by default."""
+        """Restore the position the owner left it in; on for a new House."""
         await super().async_added_to_hass()
         self.async_on_remove(self.house.control.async_add_listener(self._handle_change))
         last = await self.async_get_last_state()
-        if last is not None and last.state == STATE_ON:
-            # The loop starts once all entities have restored their values.
-            self.house.control.curtailment = True
+        # Only the flag is set here. The loop starts, and so sends anything,
+        # once all entities have restored their values, so a stored "off" wins.
+        self.house.control.curtailment = _restored_on(last)
 
     @property
     def is_on(self) -> bool:
@@ -118,6 +130,11 @@ class PublishGridPowerSwitch(HouseEntity, SwitchEntity, RestoreEntity):
 
     _attr_translation_key = "publish_grid_power"
 
+    @property
+    def suggested_object_id(self) -> str:
+        """Keep the entity id of a new House as it was before the rename."""
+        return "Publish Grid Power"
+
     def __init__(self, house: House) -> None:
         """Create the switch."""
         super().__init__(house, "publish_grid_power")
@@ -125,13 +142,13 @@ class PublishGridPowerSwitch(HouseEntity, SwitchEntity, RestoreEntity):
         self._publisher = house.grid_publisher
 
     async def async_added_to_hass(self) -> None:
-        """Restore the position the owner left it in; off by default."""
+        """Restore the position the owner left it in; on for a new House."""
         await super().async_added_to_hass()
         self.async_on_remove(self._publisher.async_add_listener(self._handle_change))
         last = await self.async_get_last_state()
-        if last is not None and last.state == STATE_ON:
-            # Publishing starts once all entities have restored their values.
-            self._publisher.enabled = True
+        # Only the flag is set here. Publishing starts, and overrides are
+        # released, once all entities have restored their values.
+        self._publisher.enabled = _restored_on(last)
 
     @property
     def is_on(self) -> bool:

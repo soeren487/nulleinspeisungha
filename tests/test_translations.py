@@ -117,3 +117,21 @@ def test_duplicate_serial_text_names_dtu_and_opendtu_setting() -> None:
         text = data["config_subentries"]["dtu"]["error"]["duplicate_serial"]
         assert "{existing}" in text
         assert setting in text
+
+
+def test_house_switches_are_named_for_what_they_do() -> None:
+    """The two House switches carry their new names in every language file."""
+    base_path = Path(__file__).parent.parent / "custom_components/nulleinspeisung"
+    expected = {
+        "strings.json": ("Regulate feed-in", "Send grid power to Victron"),
+        "translations/en.json": ("Regulate feed-in", "Send grid power to Victron"),
+        "translations/de.json": (
+            "Einspeisung regeln",
+            "Netzleistung an Victron senden",
+        ),
+    }
+    for filename, (curtailment, publish) in expected.items():
+        with open(base_path / filename) as f:
+            switches = json.load(f)["entity"]["switch"]
+        assert switches["curtailment"]["name"] == curtailment, filename
+        assert switches["publish_grid_power"]["name"] == publish, filename

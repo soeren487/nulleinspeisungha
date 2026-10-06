@@ -105,7 +105,7 @@ async def _home(
 async def test_defaults_and_entities(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
-    """A new House has Curtailment off and the documented defaults."""
+    """A House with Curtailment stored off has the documented defaults."""
     await _home(hass, dtu_network)
     assert _state(hass, "switch", "curtailment") == "off"
     assert float(_state(hass, "number", "feed_in_setpoint")) == 0
