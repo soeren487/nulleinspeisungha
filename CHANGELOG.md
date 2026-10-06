@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- A House whose AC battery was idle at exactly 0 W raised the repair issue "AC battery does not answer", although the GX was connected. The GX sends a value only when it changes, so an idle battery sent nothing. The integration now judges the GX by its heartbeat.
+
 ## 0.3.0
 
 ### New

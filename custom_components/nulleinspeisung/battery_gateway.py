@@ -28,7 +28,11 @@ from homeassistant.util import dt as dt_util
 _LOGGER = logging.getLogger(__name__)
 
 FRESH_SECONDS = 60.0
-"""A state is fresh when a value arrived this recently."""
+"""A state is fresh when any message of the GX arrived this recently.
+
+A GX publishes a value only when it changes, so an idle battery says nothing
+about its values; its heartbeat, every few seconds, proves it is alive.
+"""
 KEEPALIVE_SECONDS = 30.0
 """Seconds between two keepalive messages."""
 CHECK_SECONDS = 10.0
@@ -52,7 +56,12 @@ _PATH_FIELDS = {
     "hub4/0/Overrides/Setpoint": "setpoint_override",
     "hub4/0/Overrides/MaxDischargePower": "max_discharge_override",
 }
-_SUBSCRIBED_PATHS = (*_PATH_FIELDS, "battery/+/Info/MaxChargeCurrent")
+_HEARTBEAT_PATH = "heartbeat"
+_SUBSCRIBED_PATHS = (
+    *_PATH_FIELDS,
+    "battery/+/Info/MaxChargeCurrent",
+    _HEARTBEAT_PATH,
+)
 
 
 class GxConnectionError(Exception):
@@ -187,7 +196,7 @@ class BatteryState:
     connected: bool = False
     """Whether the GX's broker is connected."""
     fresh: bool = False
-    """Connected and a value arrived within the last 60 s."""
+    """Connected and a message of the GX arrived within the last 60 s."""
 
 
 def parse_value(payload: bytes) -> float | None:
@@ -240,7 +249,7 @@ class BatteryGateway:
         self._values = BatteryState()
         self._current_limits: dict[str, float | None] = {}
         self._connected = False
-        self._last_value_at: float | None = None
+        self._last_message_at: float | None = None
         self._published: BatteryState | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
         self._listeners: list[Callable[[], None]] = []
@@ -265,9 +274,9 @@ class BatteryGateway:
         return replace(self._values, connected=self._connected, fresh=self._is_fresh())
 
     def _is_fresh(self) -> bool:
-        if not self._connected or self._last_value_at is None:
+        if not self._connected or self._last_message_at is None:
             return False
-        age = dt_util.utcnow().timestamp() - self._last_value_at
+        age = dt_util.utcnow().timestamp() - self._last_message_at
         return age <= FRESH_SECONDS
 
     @callback
@@ -341,6 +350,10 @@ class BatteryGateway:
         if not topic.startswith(prefix):
             return
         path = topic[len(prefix) :]
+        if path == _HEARTBEAT_PATH:
+            self._last_message_at = dt_util.utcnow().timestamp()
+            self._changed()
+            return
         value = parse_value(payload)
         if (field := _PATH_FIELDS.get(path)) is not None:
             if field == "dynamic_ess_mode":
@@ -359,7 +372,7 @@ class BatteryGateway:
             )
         else:
             return
-        self._last_value_at = dt_util.utcnow().timestamp()
+        self._last_message_at = dt_util.utcnow().timestamp()
         self._changed()
 
     def _subscribe_values(self) -> None:

@@ -357,6 +357,45 @@ async def test_silent_battery_raises_an_issue_and_curtailment_goes_on(
     assert _state(hass, "binary_sensor", "battery_connected") == "on"
 
 
+async def test_an_idle_battery_is_not_reported_silent(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
+) -> None:
+    """A GX that sent its values once and then only the heartbeat is healthy."""
+    gx = SimGx()
+    gx.charge(level=80.0, power=0.0, voltage=52.0)
+    await _home(hass, dtu_network, gx)
+    for _ in range(100):  # five minutes of heartbeat only
+        freezer.tick(delta=timedelta(seconds=3))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert _state(hass, "binary_sensor", "battery_connected") == "on"
+    assert _state(hass, "sensor", "battery_soc") == "80.0"
+    assert _state(hass, "sensor", "battery_power") == "0.0"
+    assert _state(hass, "sensor", "battery_headroom") != "unavailable"
+    assert _state(hass, "sensor", "consumption") != "unavailable"
+    assert _issue(hass, "battery_not_answering") is None
+
+
+async def test_a_dead_gx_raises_the_issue_after_two_minutes(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
+) -> None:
+    """Connected but sending nothing at all: the issue comes after 2 minutes."""
+    gx = SimGx()
+    gx.charge(level=80.0, power=0.0)
+    await _home(hass, dtu_network, gx)
+    gx.dead = True
+    for _ in range(8):
+        freezer.tick(delta=timedelta(seconds=15))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert _issue(hass, "battery_not_answering") is None
+    for _ in range(10):
+        freezer.tick(delta=timedelta(seconds=15))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert _issue(hass, "battery_not_answering") is not None
+
+
 async def test_consumption_matches_the_formula(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
