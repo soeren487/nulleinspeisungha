@@ -10,3 +10,5 @@
 - [ ] With the switch off nothing is published
 - [ ] On Grid Meter failure publishing stops
 - [ ] The published value is always the measured value
+- [ ] With the owner present: after publishing is stopped, and after the same value is repeated without change, what the AC Battery does is observed on the real system and recorded in the wiki
+- [ ] At start, and whenever Grid Charging is not active, any setpoint or discharge override on the GX that the integration may have left behind is released

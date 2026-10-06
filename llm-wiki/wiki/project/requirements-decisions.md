@@ -77,7 +77,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 No decisions are open. These facts still have to be established on the real system:
 
 - Victron access path: settled on 2026-10-05. The external broker carries only the virtual grid meter's feed and custom read-only battery topics. Each GX device's built-in broker is reachable on the network without a password and publishes everything the design needs, including volatile overrides for setpoint, maximum discharge power and maximum charge power. The integration therefore connects to each GX directly (see ADR 0002) and publishes the reported grid power through Home Assistant's MQTT integration to the external broker, where the grid meter driver reads it. Both systems have Dynamic ESS off and a stored grid setpoint of 0 W.
-- Whether Victron's setpoint override expires when it is no longer refreshed, and what ESS does when the grid value freezes (decides override versus offset).
+- Victron overrides: tested on 2026-10-06. The setpoint override and the discharge override are honoured and do not expire, so grid charging and the discharge block use them as designed. Still open: what ESS does when the grid value freezes or stops, to be observed when the integration takes over publishing it.
 - The time from a limit command's acknowledgement to changed inverter output.
 - The sign of each house's grid meter sensor.
 - Which of the Garage DTU's HM-600 inverters belongs to which house.

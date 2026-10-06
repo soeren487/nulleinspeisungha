@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-10-06
+* **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): the setpoint and discharge overrides were tested on a real GX. Both are honoured and neither expires.
+
 ## 2026-10-05
 * **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): measured the HM-1500, the HMS-1600 and an HM-600 with newer firmware. They follow a limit within seconds; only inverters with 2020 firmware slew slowly.
 * **Update**: [OpenDTU and Hoymiles limit control](research/opendtu-hoymiles-limit-control.md): daytime side-by-side measurement on two panel-fed HM-600. Relative and absolute limits behave the same; the inverter moves its effective limit at about 0.5 % of rated power per second, which explains the delays.

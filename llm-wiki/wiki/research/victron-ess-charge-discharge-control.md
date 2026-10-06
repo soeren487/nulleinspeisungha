@@ -7,6 +7,9 @@ status: draft
 generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T09:36:08Z }
 stale_after: 2027-04-04T00:00:00Z
 sources:
+  - id: own-test
+    resource: test on the owner's installation, 2026-10-06
+    title: Override test on a MultiPlus-II GX with Venus OS v3.67
   - id: venus-dbus
     resource: https://github.com/victronenergy/venus/wiki/dbus
     title: Venus OS wiki - D-Bus services and paths
@@ -126,6 +129,27 @@ Discharge block and grid charge combine without conflict: a positive setpoint al
 4. Write `hub4/0/Overrides/MaxDischargePower = 1`: note whether it is honoured and for how long.
 5. Restore `-1` and `null` and confirm normal ESS operation.
 
+
+# Tested on a real GX
+
+Tested on 2026-10-06 on one MultiPlus-II GX with Venus OS v3.67, ESS mode `Hub4Mode` 1, Dynamic ESS off, stored grid setpoint 0 W, the battery discharging about 350 W into the house load at the time. Each override was written once over MQTT as `W/<portal id>/hub4/0/Overrides/<name>` with payload `{"value": ...}` and then not refreshed.[^own-test]
+
+| Test | Result |
+| --- | --- |
+| `Overrides/Setpoint` = 300 | Grid power went from about 0 W to 300 W import within 30 s and stayed there (median 307 W); the battery discharged correspondingly less. The override still read 300 after 200 s without a refresh |
+| `Overrides/Setpoint` = `null` | The override read `null` again and grid power was back near 0 W within 20 s |
+| `Overrides/MaxDischargePower` = 0 | Battery discharge fell from about 400 W to about 47 W within 50 s and the grid covered the load (about 450 W import). The override still read 0 after 150 s without a refresh |
+| `Overrides/MaxDischargePower` = -1 | The override read `null` again and the battery discharged as before |
+
+What this settles and what it leaves open:
+
+- **Both overrides are honoured for an outside writer** on this system, which the documentation left open.
+- **Neither expired** within 200 s and 150 s. Victron's own writers refresh every 5 s, so a timeout, if one existed, would be expected well inside that; treat the overrides as not expiring. Whoever sets one must release it, including after a restart of the controller.
+- **A discharge limit of 0 leaves about 47 W of discharge**, presumably the inverter's own consumption. It does not hold the battery at exactly zero.
+- **Not tested:** whether PV surplus still charges the battery while the discharge override is 0 (the battery was discharging during the test); a test window longer than 200 s; what ESS does when the grid meter value stops changing or stops arriving, because the meter feed is published by another system.
+- **Consequence for safety:** an override that does not expire needs another dead-man. If the controller is also the only publisher of the grid meter value, its death stops that feed, the grid meter driver exits after 60 s, and ESS loses its meter.
+
+
 [^venus-dbus]: Venus OS wiki - D-Bus services and paths
 [^ess-mode23]: Victron - ESS mode 2 and 3
 [^modbus-attributes]: dbus_modbustcp attributes.csv (register to D-Bus path mapping, master, fetched 2026-10-04)
@@ -137,3 +161,4 @@ Discharge block and grid charge combine without conflict: a positive setpoint al
 [^forum-disable-2022]: Victron community archive - Disable inverter in an ESS system (forum, user answer, 2022-04-01)
 [^forum-block-2026]: Victron community - Option to block discharge but keep offgrid fallback (forum, users, 2026-02; concerns a Multi RS Solar)
 [^interview]: Requirements decisions
+[^own-test]: Override test on a MultiPlus-II GX with Venus OS v3.67
