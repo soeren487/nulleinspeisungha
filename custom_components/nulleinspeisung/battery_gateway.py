@@ -4,8 +4,7 @@ The integration opens its own connection to the broker built into the GX
 (ADR 0002). Everything above ``MqttTransport`` is shared between production
 and tests; the transport is the only thing a test replaces.
 
-Only the keepalive is ever published. Writing a value later is a matter of
-calling ``_publish`` with a ``W/<portal id>/...`` topic.
+Besides the keepalive, ``async_write`` publishes a value to a path of the GX.
 """
 
 from __future__ import annotations
@@ -50,6 +49,8 @@ _PATH_FIELDS = {
     "system/0/Dc/Battery/Voltage": "voltage",
     "settings/0/Settings/CGwacs/AcPowerSetPoint": "grid_setpoint",
     "settings/0/Settings/DynamicEss/Mode": "dynamic_ess_mode",
+    "hub4/0/Overrides/Setpoint": "setpoint_override",
+    "hub4/0/Overrides/MaxDischargePower": "max_discharge_override",
 }
 _SUBSCRIBED_PATHS = (*_PATH_FIELDS, "battery/+/Info/MaxChargeCurrent")
 
@@ -179,6 +180,10 @@ class BatteryState:
     """The stored grid setpoint of the GX in W, positive for import."""
     dynamic_ess_mode: int | None = None
     """0 means Dynamic ESS is off."""
+    setpoint_override: float | None = None
+    """The grid setpoint override in W; ``None`` when not set."""
+    max_discharge_override: float | None = None
+    """The maximum discharge power override in W; ``None`` when not set."""
     connected: bool = False
     """Whether the GX's broker is connected."""
     fresh: bool = False
@@ -372,6 +377,18 @@ class BatteryGateway:
 
     async def _check(self, _now: object) -> None:
         self._changed()
+
+    def async_write(self, path: str, value: float | None) -> bool:
+        """Write ``value`` (``None`` writes null) to ``path`` on the GX.
+
+        Publishes ``{"value": value}`` to ``W/<portal id>/<path>``. Returns
+        whether it was sent; nothing is sent while the GX is not connected.
+        """
+        if not self._connected or self.portal_id is None:
+            return False
+        payload = json.dumps({"value": value}).encode()
+        self._publish(f"W/{self.portal_id}/{path}", payload)
+        return True
 
     def _publish(self, topic: str, payload: bytes) -> None:
         """The single place anything leaves for the GX."""

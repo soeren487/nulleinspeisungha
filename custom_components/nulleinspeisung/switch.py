@@ -26,7 +26,16 @@ async def async_setup_entry(
         entry, async_add_entities, lambda c: [DtuAutomaticRestartSwitch(c)]
     )
     setup_house_entities(
-        entry, async_add_entities, lambda house: [CurtailmentSwitch(house)]
+        entry,
+        async_add_entities,
+        lambda house: [
+            CurtailmentSwitch(house),
+            *(
+                [PublishGridPowerSwitch(house)]
+                if house.grid_publisher is not None
+                else []
+            ),
+        ],
     )
 
 
@@ -101,4 +110,40 @@ class CurtailmentSwitch(HouseEntity, SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Switch Curtailment off; the Inverters return to 100 %."""
         await self.house.control.async_set_curtailment(False)
+        self.async_write_ha_state()
+
+
+class PublishGridPowerSwitch(HouseEntity, SwitchEntity, RestoreEntity):
+    """Whether the House hands its Grid Power to the AC Battery."""
+
+    _attr_translation_key = "publish_grid_power"
+
+    def __init__(self, house: House) -> None:
+        """Create the switch."""
+        super().__init__(house, "publish_grid_power")
+        assert house.grid_publisher is not None
+        self._publisher = house.grid_publisher
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the position the owner left it in; off by default."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._publisher.async_add_listener(self._handle_change))
+        last = await self.async_get_last_state()
+        if last is not None and last.state == STATE_ON:
+            # Publishing starts once all entities have restored their values.
+            self._publisher.enabled = True
+
+    @property
+    def is_on(self) -> bool:
+        """Whether publishing is switched on."""
+        return self._publisher.enabled
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Start publishing."""
+        await self._publisher.async_set_enabled(True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Stop publishing."""
+        await self._publisher.async_set_enabled(False)
         self.async_write_ha_state()

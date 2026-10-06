@@ -214,6 +214,11 @@ async def async_setup_entry(
                 if house.prices is not None
                 else []
             ),
+            *(
+                [ReportedGridPowerSensor(house)]
+                if house.grid_publisher is not None
+                else []
+            ),
             ExpectedLoadSensor(house),
             ExpectedLoadEnergySensor(house),
             LoadHistoryDaysSensor(house),
@@ -381,6 +386,31 @@ class BatterySensor(HouseEntity, SensorEntity):
         """Whether the AC Battery delivers and the value is known."""
         state = self.house.battery
         return state is not None and state.fresh and self.native_value is not None
+
+
+class ReportedGridPowerSensor(HouseEntity, SensorEntity):
+    """The Grid Power last published to the AC Battery."""
+
+    _attr_translation_key = "reported_grid_power"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "reported_grid_power")
+        assert house.grid_publisher is not None
+        self._publisher = house.grid_publisher
+
+    async def async_added_to_hass(self) -> None:
+        """Write the state whenever something was published."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._publisher.async_add_listener(self._handle_change))
+
+    @property
+    def native_value(self) -> float | None:
+        """The last value published; unknown while off or before any."""
+        return self._publisher.last_published if self._publisher.enabled else None
 
 
 class _ControlSensor(HouseEntity, SensorEntity):

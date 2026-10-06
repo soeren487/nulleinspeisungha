@@ -16,6 +16,7 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
 
 from .battery_gateway import BatteryGateway, BatteryState
+from .battery_overrides import OverrideRelease, WantedOverrides
 from .battery_priority import battery_headroom
 from .battery_watch import BatteryWatch
 from .const import (
@@ -23,6 +24,7 @@ from .const import (
     CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GRID_METER_TOPIC,
     CONF_GX_HOST,
     CONF_GX_PORT,
     CONF_GX_PORTAL_ID,
@@ -39,6 +41,7 @@ from .const import (
 from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
 from .expected_load import ExpectedLoad
+from .grid_publisher import GridPublisher
 from .house_control import HouseControl
 from .house_prices import HousePrices
 
@@ -83,6 +86,8 @@ class HouseConfig:
     gx_portal_id: str | None = None
     battery_capacity: float | None = None
     """Usable capacity of the AC Battery in kWh."""
+    grid_meter_topic: str | None = None
+    """Topic to publish Grid Power to; only meaningful with an AC Battery."""
 
     @classmethod
     def from_subentry(cls, subentry: ConfigSubentry) -> HouseConfig:
@@ -106,6 +111,7 @@ class HouseConfig:
             gx_port=int(data.get(CONF_GX_PORT, DEFAULT_GX_PORT)),
             gx_portal_id=data.get(CONF_GX_PORTAL_ID) or None,
             battery_capacity=data.get(CONF_BATTERY_CAPACITY),
+            grid_meter_topic=data.get(CONF_GRID_METER_TOPIC) or None,
         )
 
     @property
@@ -170,6 +176,15 @@ class House:
         """The House's AC Battery; ``None`` without one."""
         self.control = HouseControl(self)
         self.battery_watch = BatteryWatch(self)
+        self.wanted_overrides = WantedOverrides()
+        """The GX overrides the integration wants; later tickets fill it in."""
+        self.override_release = OverrideRelease(self)
+        self.grid_publisher: GridPublisher | None = (
+            GridPublisher(self, config.grid_meter_topic)
+            if gateway is not None and config.grid_meter_topic
+            else None
+        )
+        """Publishes Grid Power to the AC Battery; ``None`` without battery or topic."""
         self.forecast = forecast
         """The House's PV Forecast; ``None`` without PV Inverters.
 
