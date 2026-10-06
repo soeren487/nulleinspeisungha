@@ -50,6 +50,8 @@ class HouseNumberDescription(NumberEntityDescription):
     """The setting belongs to the House's Expected Load, not to its control."""
     battery_only: bool = False
     """Only for Houses with an AC Battery."""
+    on_control_device: bool = False
+    """Shown on the device of the inverter control, not on the House's."""
 
 
 def _set_attr(name: str) -> Callable[[HouseControl, float], None]:
@@ -59,6 +61,7 @@ def _set_attr(name: str) -> Callable[[HouseControl, float], None]:
 DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     HouseNumberDescription(
         key="feed_in_setpoint",
+        on_control_device=True,
         translation_key="feed_in_setpoint",
         device_class=NumberDeviceClass.POWER,
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -72,6 +75,7 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     ),
     HouseNumberDescription(
         key="update_interval",
+        on_control_device=True,
         translation_key="update_interval",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         native_min_value=5,
@@ -85,6 +89,7 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     ),
     HouseNumberDescription(
         key="tolerance_band",
+        on_control_device=True,
         translation_key="tolerance_band",
         device_class=NumberDeviceClass.POWER,
         native_unit_of_measurement=UnitOfPower.WATT,
@@ -99,6 +104,7 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     ),
     HouseNumberDescription(
         key="limit_floor",
+        on_control_device=True,
         translation_key="limit_floor",
         native_unit_of_measurement=PERCENTAGE,
         native_min_value=2,
@@ -112,6 +118,7 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     ),
     HouseNumberDescription(
         key="limit_slew_rate",
+        on_control_device=True,
         translation_key="limit_slew_rate",
         native_unit_of_measurement=f"{PERCENTAGE}/{UnitOfTime.SECONDS}",
         native_min_value=0.1,
@@ -125,6 +132,7 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
     ),
     HouseNumberDescription(
         key="response_reserve",
+        on_control_device=True,
         translation_key="response_reserve",
         native_unit_of_measurement=PERCENTAGE,
         native_min_value=0,
@@ -175,6 +183,7 @@ async def async_setup_entry(
 ) -> None:
     """Set up the control settings of every House."""
     setup_house_entities(
+        hass,
         entry,
         async_add_entities,
         lambda house: [
@@ -193,6 +202,8 @@ class HouseNumber(HouseEntity, RestoreNumber):
     def __init__(self, house: House, description: HouseNumberDescription) -> None:
         """Create the number."""
         super().__init__(house, description.key)
+        if description.on_control_device:
+            self.move_to_control_device("number", description.key)
         self.entity_description = description
 
     async def async_added_to_hass(self) -> None:

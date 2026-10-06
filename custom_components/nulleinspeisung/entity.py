@@ -5,13 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
-from .const import DOMAIN, HOUSE_MODEL
+from .const import CONTROL_MODEL, DOMAIN, HOUSE_MODEL, INVERTER_MAKER
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
 from .house import House
@@ -45,7 +47,7 @@ class InverterEntity(CoordinatorEntity[DtuCoordinator]):
             identifiers={(DOMAIN, serial)},
             via_device=(DOMAIN, coordinator.dtu_serial),
             name=inverter.name,
-            manufacturer="Hoymiles",
+            manufacturer=INVERTER_MAKER,
             model=inverter.model,
             serial_number=serial,
         )
@@ -122,6 +124,28 @@ def setup_dtu_entities(
         entry.async_on_unload(coordinator.async_add_listener(add_once))
 
 
+def house_device_info(house: House) -> DeviceInfo:
+    """Device description of the House itself."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, house.config.unique_id)},
+        name=house.config.name,
+        manufacturer="Nulleinspeisung",
+        model=HOUSE_MODEL,
+    )
+
+
+def control_device_info(house: House) -> DeviceInfo:
+    """Device description of the inverter control of the House, below the House."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{house.config.unique_id}_control")},
+        via_device=(DOMAIN, house.config.unique_id),
+        translation_key="inverter_control",
+        translation_placeholders={"house": house.config.name},
+        manufacturer="Nulleinspeisung",
+        model=CONTROL_MODEL,
+    )
+
+
 class HouseEntity(Entity):
     """An entity of a House, shown on the House's device."""
 
@@ -132,12 +156,17 @@ class HouseEntity(Entity):
         """Create the entity ``key`` of this House."""
         self.house = house
         self._attr_unique_id = f"{house.config.unique_id}_{key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, house.config.unique_id)},
-            name=house.config.name,
-            manufacturer="Nulleinspeisung",
-            model=HOUSE_MODEL,
-        )
+        self._attr_device_info = house_device_info(house)
+
+    def move_to_control_device(self, domain: str, object_id: str) -> None:
+        """Show the entity on the control device, under its entity id of old.
+
+        The device name would put "inverter control" into the entity id; the id
+        is pinned to the House name and ``object_id`` instead, as it was when
+        the entity still sat on the House device.
+        """
+        self._attr_device_info = control_device_info(self.house)
+        self.entity_id = f"{domain}.{slugify(self.house.config.name)}_{object_id}"
 
     @callback
     def _handle_change(self, *_: object) -> None:
@@ -145,11 +174,31 @@ class HouseEntity(Entity):
         self.async_write_ha_state()
 
 
+class ControlEntity(HouseEntity):
+    """An entity of the inverter control of a House, shown on its own device."""
+
+    def __init__(
+        self, house: House, key: str, domain: str, object_id: str | None = None
+    ) -> None:
+        """Create the entity ``key`` of the control of this House."""
+        super().__init__(house, key)
+        self.move_to_control_device(domain, object_id or key)
+
+
 def setup_house_entities(
+    hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
     build: Callable[[House], list[Entity]],
 ) -> None:
     """Add the entities of every House to the House's subentry."""
+    devices = dr.async_get(hass)
     for subentry_id, house in entry.runtime_data.houses.items():
+        # The control device points at the House device, so that must exist
+        # whichever platform is set up first.
+        devices.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            config_subentry_id=subentry_id,
+            **house_device_info(house),
+        )
         async_add_entities(build(house), config_subentry_id=subentry_id)

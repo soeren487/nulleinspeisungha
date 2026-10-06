@@ -31,6 +31,7 @@ from .coordinator import DtuCoordinator
 from .curtailment import ControlState
 from .dtu_models import InverterSnapshot
 from .entity import (
+    ControlEntity,
     DtuEntity,
     HouseEntity,
     InverterEntity,
@@ -193,6 +194,7 @@ async def async_setup_entry(
         lambda c: [DtuRestartCountSensor(c), DtuLastRestartSensor(c)],
     )
     setup_house_entities(
+        hass,
         entry,
         async_add_entities,
         lambda house: [
@@ -413,7 +415,7 @@ class ReportedGridPowerSensor(HouseEntity, SensorEntity):
         return self._publisher.last_published if self._publisher.enabled else None
 
 
-class _ControlSensor(HouseEntity, SensorEntity):
+class _ControlSensor(ControlEntity, SensorEntity):
     """A sensor that follows the House's control loop."""
 
     async def async_added_to_hass(self) -> None:
@@ -431,7 +433,7 @@ class ControlStateSensor(_ControlSensor):
 
     def __init__(self, house: House) -> None:
         """Create the sensor."""
-        super().__init__(house, "control_state")
+        super().__init__(house, "control_state", "sensor")
 
     @property
     def native_value(self) -> str:
@@ -447,7 +449,7 @@ class InverterLimitSensor(_ControlSensor):
 
     def __init__(self, house: House) -> None:
         """Create the sensor."""
-        super().__init__(house, "inverter_limit")
+        super().__init__(house, "inverter_limit", "sensor")
 
     @property
     def native_value(self) -> int | None:
@@ -464,7 +466,9 @@ class BatteryBackedLimitSensor(_ControlSensor):
 
     def __init__(self, house: House) -> None:
         """Create the sensor."""
-        super().__init__(house, "battery_backed_limit")
+        super().__init__(
+            house, "battery_backed_limit", "sensor", "battery_backed_inverter_limit"
+        )
 
     @property
     def native_value(self) -> int | None:

@@ -12,7 +12,13 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
-from .entity import DtuEntity, HouseEntity, setup_dtu_entities, setup_house_entities
+from .entity import (
+    ControlEntity,
+    DtuEntity,
+    HouseEntity,
+    setup_dtu_entities,
+    setup_house_entities,
+)
 from .house import House
 
 
@@ -26,6 +32,7 @@ async def async_setup_entry(
         entry, async_add_entities, lambda c: [DtuAutomaticRestartSwitch(c)]
     )
     setup_house_entities(
+        hass,
         entry,
         async_add_entities,
         lambda house: [
@@ -86,19 +93,14 @@ class DtuAutomaticRestartSwitch(DtuEntity, SwitchEntity, RestoreEntity):
         self.coordinator.async_update_listeners()
 
 
-class CurtailmentSwitch(HouseEntity, SwitchEntity, RestoreEntity):
+class CurtailmentSwitch(ControlEntity, SwitchEntity, RestoreEntity):
     """Whether the House curtails its Inverters to the Feed-in Setpoint."""
 
     _attr_translation_key = "curtailment"
 
-    @property
-    def suggested_object_id(self) -> str:
-        """Keep the entity id of a new House as it was before the rename."""
-        return "Curtailment"
-
     def __init__(self, house: House) -> None:
         """Create the switch."""
-        super().__init__(house, "curtailment")
+        super().__init__(house, "curtailment", "switch")
 
     async def async_added_to_hass(self) -> None:
         """Restore the position the owner left it in; on for a new House."""
