@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1
 
 ### Changed
 
@@ -11,6 +11,12 @@
 ### Fixed
 
 - A House whose AC battery was idle at exactly 0 W raised the repair issue "AC battery does not answer", although the GX was connected. The GX sends a value only when it changes, so an idle battery sent nothing. The integration now judges the GX by its heartbeat.
+
+### Good to know
+
+- **A newly created House starts regulating its inverters at once**, because "Regulate feed-in" is now on by default. Switch it off right after creating the House if you want to set the parameters first.
+- **"Send grid power to Victron" starts publishing as soon as a grid meter topic is entered.** If another system still publishes to that topic, the integration raises a repair issue until that system is switched off.
+- Restart Home Assistant after updating.
 
 ## 0.3.0
 
