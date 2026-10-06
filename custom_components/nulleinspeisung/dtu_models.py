@@ -11,6 +11,8 @@ class DtuIdentity:
 
     serial: str
     hostname: str
+    mac: str | None = None
+    """Hardware address, lower case without separators; ``None`` if unknown."""
 
 
 @dataclass(frozen=True, slots=True)

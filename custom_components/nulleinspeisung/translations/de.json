@@ -54,7 +54,8 @@
       },
       "error": {
         "cannot_connect": "Verbindung zur DTU nicht möglich. Prüfe die Adresse.",
-        "invalid_auth": "Das Administrator-Passwort wurde abgelehnt."
+        "invalid_auth": "Das Administrator-Passwort wurde abgelehnt.",
+        "duplicate_serial": "Eine andere DTU mit dem Namen \"{existing}\" verwendet schon diese DTU-Seriennummer. Vergib jeder DTU eine eigene Seriennummer in OpenDTU unter Einstellungen > DTU-Einstellungen und versuche es dann erneut."
       },
       "abort": {
         "already_configured": "Diese DTU wurde bereits hinzugefügt.",

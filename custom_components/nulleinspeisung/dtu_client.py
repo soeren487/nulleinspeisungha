@@ -64,12 +64,27 @@ class DtuClient:
         """
         config = await self._get("/api/dtu/config", authenticated=True)
         system = await self._get("/api/system/status")
+        mac = await self._async_read_mac()
         try:
             return DtuIdentity(
-                serial=str(config["serial"]), hostname=str(system["hostname"])
+                serial=str(config["serial"]),
+                hostname=str(system["hostname"]),
+                mac=mac,
             )
         except (KeyError, TypeError) as err:
             raise DtuConnectionError("Unexpected answer from DTU") from err
+
+    async def _async_read_mac(self) -> str | None:
+        """The hardware address, ``None`` if the DTU does not tell."""
+        try:
+            status = await self._get("/api/network/status")
+        except DtuConnectionError, DtuAuthError:
+            return None
+        mac = status.get("network_mac")
+        if not isinstance(mac, str):
+            return None
+        mac = "".join(ch for ch in mac.lower() if ch.isalnum())
+        return mac or None
 
     async def async_fetch_snapshot(self) -> DtuSnapshot:
         """Read the DTU and every Inverter, one request after the other.

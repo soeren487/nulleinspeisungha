@@ -128,6 +128,10 @@ class SimDtu:
     serial: str
     hostname: str
     firmware: str
+    mac: str = "AA:BB:CC:00:00:01"
+    """Hardware address as ``/api/network/status`` reports it."""
+    network_fails: bool = False
+    """The network status request fails; everything else works."""
     password_ok: bool = True
     down: bool = False
     reboot_fails: bool = False
@@ -209,7 +213,7 @@ class DtuNetwork:
 
     def add(self, dtu: SimDtu) -> None:
         """Add a DTU to the network."""
-        self.dtus[dtu.serial] = dtu
+        self.dtus[dtu.base_url.rstrip("/")] = dtu
 
     def apply(self) -> None:
         """Register all current DTU state with the mock client."""
@@ -228,6 +232,7 @@ class DtuNetwork:
                     "/api/limit/status",
                     "/api/system/status",
                     "/api/dtu/config",
+                    "/api/network/status",
                 ]:
                     self.aioclient_mock.get(f"{base_url}{path}", exc=ClientError())
                 self.aioclient_mock.post(
@@ -257,6 +262,7 @@ class DtuNetwork:
             self._register_limit_status(base_url, dtu)
             self._register_system_status(base_url, dtu)
             self._register_dtu_config(base_url, dtu)
+            self._register_network_status(base_url, dtu)
             self.aioclient_mock.post(
                 f"{base_url}/api/maintenance/reboot",
                 status=500 if dtu.reboot_fails else 200,
@@ -423,6 +429,15 @@ class DtuNetwork:
         if dtu.uptime is not None:
             system["uptime"] = dtu.uptime
         self.aioclient_mock.get(f"{base_url}/api/system/status", json=system)
+
+    def _register_network_status(self, base_url: str, dtu: SimDtu) -> None:
+        """Register /api/network/status endpoint (no authentication)."""
+        if dtu.network_fails:
+            self.aioclient_mock.get(f"{base_url}/api/network/status", status=500)
+            return
+        status = load_fixture("network_status.json")
+        status["network_mac"] = dtu.mac
+        self.aioclient_mock.get(f"{base_url}/api/network/status", json=status)
 
     def _register_dtu_config(self, base_url: str, dtu: SimDtu) -> None:
         """Register /api/dtu/config endpoint (requires auth)."""

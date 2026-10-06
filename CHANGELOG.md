@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Adding a DTU whose DTU serial is already used by a different DTU was refused with "this DTU was already added", although it never was. The form now says that another DTU uses the same serial and that each DTU needs its own serial in OpenDTU under Settings > DTU Settings.
+
 ## 0.2.0
 
 First version with the control features. Everything that sets inverter limits is off until you switch it on.

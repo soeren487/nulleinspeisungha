@@ -103,3 +103,17 @@ def test_price_level_states_are_translated_into_real_german() -> None:
         "expensive": "Teuer",
         "very_expensive": "Sehr teuer",
     }
+
+
+def test_duplicate_serial_text_names_dtu_and_opendtu_setting() -> None:
+    """The duplicate serial error carries the existing DTU and points to OpenDTU."""
+    base = Path(__file__).parent.parent / "custom_components/nulleinspeisung"
+    for name, setting in (
+        ("strings.json", "Settings > DTU Settings"),
+        ("translations/en.json", "Settings > DTU Settings"),
+        ("translations/de.json", "Einstellungen > DTU-Einstellungen"),
+    ):
+        data = json.loads((base / name).read_text(encoding="utf-8"))
+        text = data["config_subentries"]["dtu"]["error"]["duplicate_serial"]
+        assert "{existing}" in text
+        assert setting in text

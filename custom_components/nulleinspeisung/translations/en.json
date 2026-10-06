@@ -54,7 +54,8 @@
       },
       "error": {
         "cannot_connect": "Cannot connect to the DTU. Check the address.",
-        "invalid_auth": "The administrator password was refused."
+        "invalid_auth": "The administrator password was refused.",
+        "duplicate_serial": "A different DTU named \"{existing}\" already uses this DTU serial. Give each DTU its own serial in OpenDTU under Settings > DTU Settings, then try again."
       },
       "abort": {
         "already_configured": "This DTU has already been added.",
