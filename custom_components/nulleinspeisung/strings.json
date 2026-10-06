@@ -187,6 +187,9 @@
       },
       "charging_blocked_by_efficiency": {
         "name": "Grid charging blocked by efficiency"
+      },
+      "discharge_block": {
+        "name": "Discharge block active"
       }
     },
     "sensor": {

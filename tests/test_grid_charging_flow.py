@@ -363,7 +363,7 @@ async def test_the_efficiency_blocks_charging_and_it_is_shown(
     await _settle(hass, freezer, gx, to="2026-10-05T02:00")
     await _settle(hass, freezer, gx, to="2026-10-05T02:30")
     assert _value(hass, "sensor", "grid_charging_state") == "blocked_by_efficiency"
-    assert gx.other_publishes == []
+    assert _writes(gx) == []  # (the cheap quarter-hours do hold a discharge block)
 
 
 async def test_a_better_efficiency_lifts_the_block(
@@ -890,6 +890,7 @@ async def test_the_charging_device_sits_below_the_house(
     assert {e.unique_id for e in entities} == {
         f"house-home_{key}"
         for key in (
+            "discharge_block",
             "grid_charging",
             "ignore_efficiency",
             "charge_target",
@@ -910,6 +911,7 @@ async def test_the_charging_device_sits_below_the_house(
         "number.home_battery_efficiency",
         "select.home_charge_price_levels",
         "binary_sensor.home_charging_blocked_by_efficiency",
+        "binary_sensor.home_discharge_block",
         "sensor.home_grid_charging_state",
         "sensor.home_next_charging_start",
         "sensor.home_energy_to_buy",

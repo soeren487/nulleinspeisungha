@@ -96,6 +96,27 @@ def slot_length(prices: Sequence[PriceSlot]) -> timedelta:
     return min(steps) if steps else DEFAULT_SLOT
 
 
+def discharge_block_active(
+    now: datetime,
+    prices: Sequence[PriceSlot],
+    qualifying: Collection[Any],
+) -> bool:
+    """Whether a Discharge Block is active at ``now``.
+
+    True when the price point valid at ``now`` (``start <= now < start + slot
+    length``) is known and its Price Level is one of ``qualifying``. Whether
+    charging is planned, the charge level and the Battery Efficiency play no part.
+    """
+    if not prices:
+        return False
+    now = _utc(now)
+    length = slot_length(prices)
+    return any(
+        _utc(p.start) <= now < _utc(p.start) + length and p.level in qualifying
+        for p in prices
+    )
+
+
 def plan_charging(
     now: datetime,
     prices: Sequence[PriceSlot],
