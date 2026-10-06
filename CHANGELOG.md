@@ -1,12 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 ### New
 
 - **Grid charging buys only what the sun will not deliver.** Once the PV forecast is usable, "Charge from grid" no longer fills the battery to the Charge target by sunrise by default, but buys only what the battery must hold at sunrise to carry the House until the sun covers its consumption, or until the next cheap quarter-hour, and never more than the Charge target allows. The energy needed is the largest deficit that builds up from sunrise on: the expected consumption minus the counted share of the forecast, added up quarter-hour by quarter-hour. What the battery will still hold at sunrise without any charging (its Discharge Blocks included) is subtracted. The switch "Use PV forecast" ("PV-Prognose berücksichtigen", on by default) turns this off. The number "Counted share of PV forecast" ("Angerechneter Anteil der PV-Prognose", default 70 %, 10 to 100 %) says how much of the forecast is trusted. The sensors "Energy needed at sunrise", "Battery at sunrise" and "Forecast surplus" show the figures, also while the feature is off or not yet usable, and the binary sensor "PV forecast in use" says whether the current plan was made with it.
 - It takes effect only once the forecast is usable (14 days of production history). Until the consumption has been learned (a week of history), the fallback daily consumption stands in for it. Before that, grid charging fills to the Charge target as before.
 - The production of Battery-backed Inverters at night is not counted, so the energy bought errs on the side of a little too much.
+
+### Good to know
+
+- **No effect until the PV forecast is usable**, which needs 14 days of production history on this installation. Until then grid charging fills to the charge target as before, and the new sensors show what it would do.
+- **"Use PV forecast" is on by default.** Switch it off to always charge to the target.
+- Restart Home Assistant after updating.
 
 ## 0.4.0
 
