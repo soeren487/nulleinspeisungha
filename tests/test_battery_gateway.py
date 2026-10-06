@@ -133,6 +133,7 @@ async def test_only_the_needed_topics_are_subscribed(hass: HomeAssistant) -> Non
             f"N/{p}/settings/0/Settings/DynamicEss/Mode",
             f"N/{p}/hub4/0/Overrides/Setpoint",
             f"N/{p}/hub4/0/Overrides/MaxDischargePower",
+            f"N/{p}/heartbeat",
         ]
     )
     assert not any("#" in f for f in gx.subscribed_filters)
@@ -165,6 +166,7 @@ async def test_state_goes_stale_60_seconds_after_the_last_value(
     gateway = await _start(hass, gx)
     told: list[bool] = []
     gateway.async_add_listener(lambda: told.append(gateway.state.fresh))
+    gx.dead = True
     for _ in range(6):
         await _tick(hass, freezer, 10)
     assert gateway.state.fresh
@@ -174,9 +176,59 @@ async def test_state_goes_stale_60_seconds_after_the_last_value(
     assert gateway.state.connected
     assert told == [False]
     # A value brings it back at once.
+    gx.dead = False
     gx.set("system/0/Dc/Battery/Power", 10)
     assert gateway.state.fresh
     assert told == [False, True]
+    await gateway.async_stop()
+
+
+async def test_a_heartbeat_alone_keeps_the_state_fresh(
+    hass: HomeAssistant, freezer
+) -> None:
+    """An idle battery sends no value, only the heartbeat: still fresh, values kept."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    told: list[bool] = []
+    gateway.async_add_listener(lambda: told.append(gateway.state.fresh))
+    for _ in range(100):  # five minutes, three seconds at a time
+        await _tick(hass, freezer, 3)
+    state = gateway.state
+    assert state.fresh
+    assert state.charge_level == 82.0
+    assert told == []  # a heartbeat that changes nothing tells nobody
+    await gateway.async_stop()
+
+
+async def test_no_heartbeat_and_no_value_for_60_seconds_is_not_fresh(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A GX that sends nothing at all goes stale, and the heartbeat revives it."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    told: list[bool] = []
+    gateway.async_add_listener(lambda: told.append(gateway.state.fresh))
+    gx.dead = True
+    for _ in range(6):
+        await _tick(hass, freezer, 10)
+    assert gateway.state.fresh
+    await _tick(hass, freezer, 10)
+    assert not gateway.state.fresh
+    assert gateway.state.connected
+    assert gateway.state.charge_level == 82.0
+    assert told == [False]
+    gx.dead = False
+    await _tick(hass, freezer, 3)
+    assert gateway.state.fresh
+    assert told == [False, True]
+    await gateway.async_stop()
+
+
+async def test_the_heartbeat_is_subscribed(hass: HomeAssistant) -> None:
+    """The gateway listens to the heartbeat of its GX."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    assert f"N/{gx.portal_id}/heartbeat" in gx.subscribed_filters
     await gateway.async_stop()
 
 
@@ -206,7 +258,7 @@ async def test_reconnect_subscribes_again_and_asks_for_everything(
     gx.restore()
     await hass.async_block_till_done()
     assert gx.keepalives == [b"", b""]
-    assert len(gx.subscribed_filters) == 8  # the serial filter is not needed again
+    assert len(gx.subscribed_filters) == 9  # the serial filter is not needed again
     state = gateway.state
     assert state.connected
     assert state.fresh

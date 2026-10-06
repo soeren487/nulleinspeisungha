@@ -7,6 +7,9 @@ status: draft
 generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T08:52:08Z }
 stale_after: 2027-04-04T00:00:00Z
 sources:
+  - id: own-observation
+    resource: observation on the owner's two GX devices, 2026-10-06
+    title: Message cadence of a GX with an idle battery
   - id: mqtt-grid-repo
     resource: https://github.com/mr-manuel/venus-os_dbus-mqtt-grid
     title: mr-manuel/venus-os_dbus-mqtt-grid (README, config.sample.ini, dbus-mqtt-grid.py; master, last commit 2025-04-27)
@@ -123,6 +126,8 @@ Trade-offs versus the offset trick (agent's assessment):
 
 # MQTT on the GX: keepalive
 
+- **Observed on Venus OS v3.67 (2026-10-06):** with the keepalive pattern below, the GX publishes each value once and afterwards only when it changes. A battery that is idle at exactly 0 W sent none of battery power, charge level or voltage in 90 s. `N/<portal id>/heartbeat` (payload `{"value": <unix time>}`) arrived every 3 s throughout. Liveness of the GX must therefore be judged by the heartbeat, not by the arrival of values.[^own-observation]
+
 - Topics: `N/<id>/<service>/<instance>/<path>` notifications, `R/…` read requests, `W/…` writes, payload `{"value": …}`.[^flashmq]
 - "To activate keep-alive, send a read request to `R/<portal ID>/keepalive`"; "Keep-alive timeout is 60 seconds."[^flashmq] Without it the GX stops publishing `N/` topics. Nothing is retained; a keepalive with empty payload triggers a full republish that ends with `N/<id>/full_publish_completed`.[^flashmq]
 - Recommended pattern: first keepalive with empty payload, then every 30 s with `{ "keepalive-options" : ["suppress-republish"] }`.[^flashmq]
@@ -167,3 +172,4 @@ Home Assistant 2026.5 added an official Victron GX integration that connects to 
 [^override-forum]: Victron community - volatile register for grid setpoint, what about MQTT (forum; includes Victron staff reply, 2024-09-23)
 [^ha-victron-gx]: Home Assistant - Victron GX integration
 [^initial-requirements]: Initial requirements stated by Soeren
+[^own-observation]: Message cadence of a GX with an idle battery

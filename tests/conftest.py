@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
 import re
+import time
 from collections import deque
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -795,6 +797,10 @@ def _topic_matches(topic_filter: str, topic: str) -> bool:
     )
 
 
+HEARTBEAT_SECONDS = 3.0
+"""A GX with the keepalive on publishes its heartbeat this often."""
+
+
 class FakeTransport:
     """The MQTT client of the integration, connected to a ``SimGx``."""
 
@@ -844,6 +850,8 @@ class FakeTransport:
         self.connected = False
         if self.gx is not None and self in self.gx.clients:
             self.gx.clients.remove(self)
+            if not self.gx.clients:
+                self.gx._stop_heartbeat()
 
 
 class SimGx:
@@ -860,9 +868,12 @@ class SimGx:
         self.port = port
         self.portal_id, self.topics = recorded_gx_topics()
         self.down = False
+        self.dead = False
+        """A dead GX is connected but sends nothing: no value, no heartbeat."""
         self.clients: list[FakeTransport] = []
         self.published: list[tuple[str, bytes]] = []
         """Everything the integration published, in order."""
+        self._beat: asyncio.TimerHandle | None = None
 
     @property
     def keepalives(self) -> list[bytes]:
@@ -909,9 +920,31 @@ class SimGx:
             if value is not None:
                 self.set(path, value)
 
+    def _start_heartbeat(self) -> None:
+        """Beat every ``HEARTBEAT_SECONDS`` of controlled time, once asked to."""
+        if self._beat is None:
+            self._beat = asyncio.get_running_loop().call_later(
+                HEARTBEAT_SECONDS, self._heartbeat
+            )
+
+    def _stop_heartbeat(self) -> None:
+        if self._beat is not None:
+            self._beat.cancel()
+            self._beat = None
+
+    def _heartbeat(self) -> None:
+        self._beat = None
+        if not any(client.connected for client in self.clients):
+            return
+        self._start_heartbeat()
+        if not self.dead:
+            self.topics["heartbeat"] = json.dumps({"value": int(time.time())})
+            self._deliver("heartbeat")
+
     def drop(self) -> None:
         """The GX goes away: all clients lose the connection and cannot return."""
         self.down = True
+        self._stop_heartbeat()
         for client in self.clients:
             if client.connected:
                 client.connected = False
@@ -939,6 +972,8 @@ class SimGx:
     def received(self, client: FakeTransport, topic: str, payload: bytes) -> None:
         """Take a message; an empty keepalive makes the GX republish everything."""
         self.published.append((topic, payload))
+        if topic == f"R/{self.portal_id}/keepalive":
+            self._start_heartbeat()
         if topic == f"R/{self.portal_id}/keepalive" and payload == b"":
             for path in list(self.topics):
                 self._deliver(path, only=client)
@@ -947,6 +982,8 @@ class SimGx:
         return self.topics[path].encode()
 
     def _deliver(self, path: str, only: FakeTransport | None = None) -> None:
+        if self.dead:
+            return
         topic = f"N/{self.portal_id}/{path}"
         for client in list(self.clients):
             if (only is not None and client is not only) or not client.connected:
