@@ -74,7 +74,10 @@ async def async_setup_entry(
             *([ForecastUsableSensor(house)] if house.forecast else []),
             *([BatteryConnectedSensor(house)] if house.gateway else []),
             *(
-                [ChargingBlockedByEfficiencySensor(house)]
+                [
+                    ChargingBlockedByEfficiencySensor(house),
+                    DischargeBlockSensor(house),
+                ]
                 if house.grid_charging
                 else []
             ),
@@ -200,3 +203,18 @@ class ChargingBlockedByEfficiencySensor(ChargingEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Whether quarter-hours qualify by Price Level but none is worth it."""
         return self.charging.blocked_by_efficiency
+
+
+class DischargeBlockSensor(ChargingEntity, BinarySensorEntity):
+    """Whether a Discharge Block holds the AC Battery back right now."""
+
+    _attr_translation_key = "discharge_block"
+
+    def __init__(self, house: House) -> None:
+        """Create the binary sensor."""
+        super().__init__(house, "discharge_block", "binary_sensor")
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the wanted discharge override is 0 W."""
+        return self.charging.discharge_block

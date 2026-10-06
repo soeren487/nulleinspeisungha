@@ -21,7 +21,12 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from . import solar
-from .charging_planner import ChargingPlan, PlanReason, plan_charging
+from .charging_planner import (
+    ChargingPlan,
+    PlanReason,
+    discharge_block_active,
+    plan_charging,
+)
 from .price_source import PriceLevel
 
 if TYPE_CHECKING:
@@ -182,8 +187,9 @@ class GridCharging:
         self._unsubs = []
         self._last_wanted = None
         overrides = self._house.wanted_overrides
-        if overrides.setpoint is not None:
+        if overrides.setpoint is not None or overrides.max_discharge_power is not None:
             overrides.setpoint = None
+            overrides.max_discharge_power = None
             self._house.override_control.evaluate()
 
     # -- triggers ----------------------------------------------------------
@@ -298,6 +304,31 @@ class GridCharging:
         return _STATE_OF_REASON[plan.reason]
 
     @property
+    def discharge_block(self) -> bool:
+        """Whether the wanted discharge override is 0 W: a Discharge Block is on."""
+        return self._house.wanted_overrides.max_discharge_power == 0.0
+
+    def _block_wanted(self, now: datetime) -> bool:
+        """Whether a Discharge Block is wanted: the rule, and we own a fresh battery."""
+        house = self._house
+        publisher = house.grid_publisher
+        battery = house.battery
+        prices = house.prices
+        if (
+            not self.enabled
+            or publisher is None
+            or not publisher.enabled
+            or battery is None
+            or not battery.fresh
+            or battery.dynamic_ess_mode
+            or prices is None
+        ):
+            return False
+        return discharge_block_active(
+            now, prices.prices, PRICE_LEVEL_OPTIONS[self.price_levels]
+        )
+
+    @property
     def blocked_by_efficiency(self) -> bool:
         """Whether the plan is empty only because of the Battery Efficiency."""
         return (
@@ -315,7 +346,10 @@ class GridCharging:
     # -- execution ---------------------------------------------------------
 
     def _evaluate(self, refresh: bool = False) -> None:
-        """Set the wanted setpoint override, or none, and have it carried out.
+        """Set the wanted overrides, or none, and have them carried out.
+
+        The discharge override is 0 W during a Discharge Block (``_block_wanted``)
+        and nothing otherwise; it is re-evaluated with every trigger here.
 
         Whatever ends charging acts at once. While charging goes on, the value
         is only recomputed on the timer (``refresh``) and when charging starts:
@@ -333,9 +367,17 @@ class GridCharging:
                 wanted = overrides.setpoint
         else:
             self._last_wanted = None
-        if overrides.setpoint != wanted:
+        discharge = 0.0 if self._block_wanted(dt_util.utcnow()) else None
+        changed = (
+            overrides.setpoint != wanted or overrides.max_discharge_power != discharge
+        )
+        block_changed = overrides.max_discharge_power != discharge
+        if changed:
             overrides.setpoint = wanted
+            overrides.max_discharge_power = discharge
             self._house.override_control.evaluate()
+        if block_changed:
+            self._notify()
 
     def _charging_setpoint(self) -> float:
         """The grid import in W that makes the battery take the Maximum Charge Power.

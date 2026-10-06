@@ -187,6 +187,9 @@
       },
       "charging_blocked_by_efficiency": {
         "name": "Netzladen durch Wirkungsgrad blockiert"
+      },
+      "discharge_block": {
+        "name": "Entladesperre aktiv"
       }
     },
     "sensor": {

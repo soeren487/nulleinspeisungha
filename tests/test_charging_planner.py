@@ -12,9 +12,11 @@ import pytest
 from custom_components.nulleinspeisung.charging_planner import (
     ChargingPlan,
     PlanReason,
+    discharge_block_active,
     plan_charging,
     slot_length,
 )
+from custom_components.nulleinspeisung.price_source import PriceLevel
 
 NIGHT = datetime(2026, 10, 5, 22, 0, tzinfo=UTC)
 DEADLINE = datetime(2026, 10, 6, 6, 0, tzinfo=UTC)
@@ -443,3 +445,64 @@ def test_a_day_of_92_or_100_slots_is_planned_through(
 
 def test_the_slot_length_of_a_92_slot_day_is_a_quarter_hour() -> None:
     assert slot_length(local_day(2026, 3, 29)) == QUARTER
+
+
+# -- the Discharge Block rule ----------------------------------------------
+
+QUALIFYING_SETS = {
+    "very_cheap": {PriceLevel.VERY_CHEAP},
+    "cheap_and_below": {PriceLevel.VERY_CHEAP, PriceLevel.CHEAP},
+    "normal_and_below": {PriceLevel.VERY_CHEAP, PriceLevel.CHEAP, PriceLevel.NORMAL},
+}
+ALL_LEVELS = (
+    PriceLevel.VERY_CHEAP,
+    PriceLevel.CHEAP,
+    PriceLevel.NORMAL,
+    PriceLevel.EXPENSIVE,
+    PriceLevel.VERY_EXPENSIVE,
+)
+
+
+@pytest.mark.parametrize("option", list(QUALIFYING_SETS))
+@pytest.mark.parametrize("level", ALL_LEVELS)
+def test_a_block_is_active_exactly_when_the_level_qualifies(
+    option: str, level: PriceLevel
+) -> None:
+    qualifying = QUALIFYING_SETS[option]
+    points = prices(NIGHT, [(0.3, level), (0.3, PriceLevel.VERY_EXPENSIVE)])
+    now = NIGHT + timedelta(minutes=5)
+    assert discharge_block_active(now, points, qualifying) is (level in qualifying)
+
+
+def test_a_block_needs_a_price_for_the_instant() -> None:
+    qualifying = QUALIFYING_SETS["cheap_and_below"]
+    assert not discharge_block_active(NIGHT, [], qualifying)
+    points = night([0.1, 0.1], level=PriceLevel.CHEAP)
+    assert not discharge_block_active(NIGHT - timedelta(seconds=1), points, qualifying)
+    assert not discharge_block_active(NIGHT + 2 * QUARTER, points, qualifying)
+
+
+def test_a_block_follows_the_slot_boundaries_exactly() -> None:
+    qualifying = QUALIFYING_SETS["cheap_and_below"]
+    points = prices(
+        NIGHT,
+        [
+            (0.4, PriceLevel.NORMAL),
+            (0.1, PriceLevel.CHEAP),
+            (0.4, PriceLevel.NORMAL),
+        ],
+    )
+    second = NIGHT + QUARTER
+    third = NIGHT + 2 * QUARTER
+    assert not discharge_block_active(second - timedelta(seconds=1), points, qualifying)
+    assert discharge_block_active(second, points, qualifying)
+    assert discharge_block_active(third - timedelta(seconds=1), points, qualifying)
+    assert not discharge_block_active(third, points, qualifying)
+
+
+def test_a_block_does_not_depend_on_the_price_or_the_order() -> None:
+    """Only the level of the point valid at the instant counts."""
+    qualifying = QUALIFYING_SETS["very_cheap"]
+    points = prices(NIGHT, [(0.9, PriceLevel.VERY_CHEAP), (0.01, PriceLevel.EXPENSIVE)])
+    assert discharge_block_active(NIGHT, list(reversed(points)), qualifying)
+    assert not discharge_block_active(NIGHT + QUARTER, points, qualifying)
