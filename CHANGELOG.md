@@ -1,12 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 ### New
 
 - **Charging the AC battery from the grid.** A House with an AC battery, Tibber prices and a usable capacity can charge its battery in the cheapest quarter-hours before the next sunrise, across midnight. It has its own device, "<House> Netzladen" (English "<House> Grid charging"), below the House device. Switch "Aus dem Netz laden" ("Charge from grid") turns it on; it is off by default, because it spends money. Choose the Charge target (default 100 %) and the price level at which charging is allowed: only very cheap, cheap and very cheap (default), or normal and cheaper. The plan is made again at every quarter-hour, when new prices arrive, when you change a setting and when the charge level moves by a percentage point. During a planned quarter-hour the battery charges at the maximum charge power; afterwards it is released. Switching it off, losing the prices, losing the battery or switching off "Send grid power to Victron" releases the battery at once. Nothing is charged while Dynamic ESS is active on the GX. Sensors show the state, the start of the next charging, the energy to buy, the energy missing and the reference price; the sensor "Next charging start" lists all planned quarter-hours in its attribute "slots".
 - **Efficiency check.** A battery gives back only part of what is charged into it: the setting "AC battery efficiency" (default 78 %, as a round trip) says how much. A quarter-hour is only used for charging if its price is at most this share of the reference price, which is the mean price of the quarter-hours after sunrise that are not cheap enough to charge in, over the following 24 hours. If cheap quarter-hours exist but none passes the check, nothing is charged and the binary sensor "Grid charging blocked by efficiency" is on. Switch "Ignore efficiency check" skips the check; it is off by default. The efficiency also decides how much energy is bought: for every kWh that should end up in the battery, a little more is taken from the grid.
 - **Discharge block.** While "Charge from grid" is on, the AC battery is not allowed to discharge in any quarter-hour whose price level is allowed for charging (very cheap, cheap or normal, as you chose), whether or not charging is planned in it. The house then draws its power from the grid instead of from the battery, so the battery keeps its energy for the expensive hours. The block starts and ends exactly at the quarter-hour boundaries, and is lifted at once when you switch "Charge from grid" off, when the prices are lost, when the battery stops answering, when Dynamic ESS turns on or when you switch off "Send grid power to Victron". The binary sensor "Discharge block active" ("Entladesperre aktiv") on the grid charging device shows it. About 50 W of discharge remain during a block (measured on a real system). The block only limits discharging, so solar surplus should still charge the battery; that has not been observed on a real system yet.
+
+### Good to know
+
+- **"Charge from grid" is off after the update.** The grid charging device already shows the plan it would follow, so you can check a night's plan before switching it on.
+- **Grid charging and the discharge block only act on a House where "Send grid power to Victron" is on.** Otherwise the state reads "not in control" and nothing is written to the GX.
+- **Before tomorrow's prices are published** (around 13:00) there is no reference price, and the efficiency check is skipped for that plan.
+- Dynamic ESS must be off on the GX.
+- Restart Home Assistant after updating.
 
 ## 0.3.1
 
