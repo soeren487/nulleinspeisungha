@@ -190,6 +190,9 @@
       },
       "discharge_block": {
         "name": "Discharge block active"
+      },
+      "forecast_in_use": {
+        "name": "PV forecast in use"
       }
     },
     "sensor": {
@@ -322,6 +325,15 @@
       },
       "reference_price": {
         "name": "Reference price"
+      },
+      "energy_needed_at_sunrise": {
+        "name": "Energy needed at sunrise"
+      },
+      "battery_at_sunrise": {
+        "name": "Battery at sunrise"
+      },
+      "forecast_surplus": {
+        "name": "Forecast surplus"
       }
     },
     "button": {
@@ -344,6 +356,9 @@
       },
       "ignore_efficiency": {
         "name": "Ignore efficiency check"
+      },
+      "use_forecast": {
+        "name": "Use PV forecast"
       }
     },
     "number": {
@@ -376,6 +391,9 @@
       },
       "battery_efficiency": {
         "name": "AC battery efficiency"
+      },
+      "forecast_share": {
+        "name": "Counted share of PV forecast"
       }
     },
     "select": {

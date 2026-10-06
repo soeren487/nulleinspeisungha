@@ -902,6 +902,12 @@ async def test_the_charging_device_sits_below_the_house(
             "energy_to_buy",
             "energy_missing",
             "reference_price",
+            "use_forecast",
+            "forecast_share",
+            "energy_needed_at_sunrise",
+            "battery_at_sunrise",
+            "forecast_surplus",
+            "forecast_in_use",
         )
     }
     assert {e.entity_id for e in entities} == {
@@ -917,6 +923,12 @@ async def test_the_charging_device_sits_below_the_house(
         "sensor.home_energy_to_buy",
         "sensor.home_energy_missing",
         "sensor.home_reference_price",
+        "switch.home_use_forecast",
+        "number.home_forecast_share",
+        "sensor.home_energy_needed_at_sunrise",
+        "sensor.home_battery_at_sunrise",
+        "sensor.home_forecast_surplus",
+        "binary_sensor.home_forecast_in_use",
     }
 
 

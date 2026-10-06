@@ -44,7 +44,11 @@ async def async_setup_entry(
                 else []
             ),
             *(
-                [GridChargingSwitch(house), IgnoreEfficiencySwitch(house)]
+                [
+                    GridChargingSwitch(house),
+                    IgnoreEfficiencySwitch(house),
+                    UseForecastSwitch(house),
+                ]
                 if house.grid_charging is not None
                 else []
             ),
@@ -236,3 +240,32 @@ class IgnoreEfficiencySwitch(ChargingEntity, SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Apply the efficiency test."""
         self.charging.set_ignore_efficiency(False)
+
+
+class UseForecastSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
+    """Whether Grid Charging buys only what the PV Forecast leaves to be bought."""
+
+    _attr_translation_key = "use_forecast"
+
+    def __init__(self, house: House) -> None:
+        """Create the switch."""
+        super().__init__(house, "use_forecast", "switch")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the position the owner left it in; on by default."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        self.charging.use_forecast = last is None or last.state != STATE_OFF
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the PV Forecast is taken into account."""
+        return self.charging.use_forecast
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Take the PV Forecast into account."""
+        self.charging.set_use_forecast(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Fill up to the Charge Target regardless of the forecast."""
+        self.charging.set_use_forecast(False)

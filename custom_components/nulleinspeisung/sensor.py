@@ -233,6 +233,9 @@ async def async_setup_entry(
                     ChargingEnergySensor(house, "energy_to_buy"),
                     ChargingEnergySensor(house, "energy_missing"),
                     ReferencePriceSensor(house),
+                    SunriseEnergySensor(house, "energy_needed_at_sunrise"),
+                    SunriseEnergySensor(house, "battery_at_sunrise"),
+                    SunriseEnergySensor(house, "forecast_surplus"),
                 ]
                 if house.grid_charging is not None
                 else []
@@ -786,3 +789,29 @@ class ReferencePriceSensor(ChargingEntity, SensorEntity):
         prices = self.house.prices
         currency = prices.currency if prices else None
         return f"{currency}/kWh" if currency else None
+
+
+class SunriseEnergySensor(ChargingEntity, SensorEntity):
+    """An energy worked out from the PV Forecast and the Expected Load, in kWh."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, house: House, key: str) -> None:
+        """Create the sensor ``energy_needed_at_sunrise``, ``battery_at_sunrise`` or
+        ``forecast_surplus``.
+        """
+        super().__init__(house, key, "sensor")
+        self._attr_translation_key = key
+        self._key = key
+
+    @property
+    def native_value(self) -> float | None:
+        """The energy, unknown while it cannot be computed."""
+        charging = self.charging
+        if self._key == "energy_needed_at_sunrise":
+            return charging.energy_needed
+        if self._key == "battery_at_sunrise":
+            return charging.battery_at_sunrise
+        return charging.forecast_surplus

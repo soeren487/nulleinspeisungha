@@ -190,6 +190,9 @@
       },
       "discharge_block": {
         "name": "Entladesperre aktiv"
+      },
+      "forecast_in_use": {
+        "name": "PV-Prognose wird verwendet"
       }
     },
     "sensor": {
@@ -322,6 +325,15 @@
       },
       "reference_price": {
         "name": "Referenzpreis"
+      },
+      "energy_needed_at_sunrise": {
+        "name": "Energiebedarf bei Sonnenaufgang"
+      },
+      "battery_at_sunrise": {
+        "name": "Batterie bei Sonnenaufgang"
+      },
+      "forecast_surplus": {
+        "name": "PV-Überschuss laut Prognose"
       }
     },
     "button": {
@@ -344,6 +356,9 @@
       },
       "ignore_efficiency": {
         "name": "Wirkungsgrad-Prüfung übergehen"
+      },
+      "use_forecast": {
+        "name": "PV-Prognose berücksichtigen"
       }
     },
     "number": {
@@ -376,6 +391,9 @@
       },
       "battery_efficiency": {
         "name": "Wirkungsgrad der AC-Batterie"
+      },
+      "forecast_share": {
+        "name": "Angerechneter Anteil der PV-Prognose"
       }
     },
     "select": {
