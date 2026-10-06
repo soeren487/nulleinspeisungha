@@ -163,7 +163,7 @@ async def test_a_silent_meter_stops_the_publishing(
 async def test_with_the_switch_off_nothing_is_published_or_written(
     hass: HomeAssistant, dtu_network: DtuNetwork, mqtt_mock: MagicMock
 ) -> None:
-    """Off is the default; the GX is not written to even with overrides set."""
+    """Stored off: the GX is not written to even with overrides set."""
     gx = SimGx()
     await _home(hass, dtu_network, gx, on=False)
     gx.set("hub4/0/Overrides/Setpoint", 100)

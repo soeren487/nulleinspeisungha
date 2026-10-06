@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- The two House switches have clearer names. "Curtailment" is now "Regulate feed-in" ("Einspeisung regeln"), and "Publish grid power" is now "Send grid power to Victron" ("Netzleistung an Victron senden"). Entity ids and unique ids stay the same.
+- Both switches are on by default for a newly created House. A House that already exists keeps the state its switches have, on or off.
+
 ### Fixed
 
 - A House whose AC battery was idle at exactly 0 W raised the repair issue "AC battery does not answer", although the GX was connected. The GX sends a value only when it changes, so an idle battery sent nothing. The integration now judges the GX by its heartbeat.

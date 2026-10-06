@@ -139,7 +139,7 @@
             "gx_host": "Hostname oder IP-Adresse des GX",
             "gx_port": "Port des MQTT-Brokers des GX",
             "battery_capacity": "Nutzbare Kapazität der AC-Batterie in kWh",
-            "grid_meter_topic": "MQTT-Topic, auf dem die virtuelle Netzmessung der AC-Batterie lauscht. Ohne Topic kann das House die Netzleistung nicht melden."
+            "grid_meter_topic": "MQTT-Topic, auf dem die virtuelle Netzmessung der AC-Batterie lauscht. Ohne Topic kann das House die Netzleistung nicht an Victron senden."
           }
         }
       },
@@ -293,10 +293,10 @@
         "name": "Automatischer Neustart"
       },
       "curtailment": {
-        "name": "Abregelung"
+        "name": "Einspeisung regeln"
       },
       "publish_grid_power": {
-        "name": "Netzleistung melden"
+        "name": "Netzleistung an Victron senden"
       }
     },
     "number": {
@@ -398,7 +398,7 @@
     },
     "mqtt_needed": {
       "title": "MQTT-Integration für House {house} nötig",
-      "description": "Die Netzleistung von {house} soll an die AC-Batterie gemeldet werden, aber die MQTT-Integration von Home Assistant ist nicht eingerichtet. Richte sie ein oder schalte das Melden aus."
+      "description": "Der Schalter „Netzleistung an Victron senden“ von {house} ist an, aber die MQTT-Integration von Home Assistant ist nicht eingerichtet. Richte sie ein oder schalte „Netzleistung an Victron senden“ aus."
     },
     "other_grid_publisher": {
       "title": "Ein anderes System meldet ebenfalls die Netzleistung für House {house}",

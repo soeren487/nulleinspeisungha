@@ -17,7 +17,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from aiohttp.client_exceptions import ClientError
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
+from homeassistant.helpers import restore_state
+from homeassistant.util import slugify
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import (
     AiohttpClientMockResponse,
@@ -1029,6 +1031,16 @@ class SimHouse:
     capacity: float | None = None
     grid_topic: str | None = None
     """Topic the House publishes its Grid Power to; needs an AC Battery."""
+    stored_switches: dict[str, str | None] = field(
+        default_factory=lambda: {"curtailment": "off", "publish_grid_power": "off"}
+    )
+    """The state each House switch had when Home Assistant last stopped, by key.
+
+    ``setup_entry`` stores these before the integration loads, unless the test has
+    already stored a state for that switch. Off is the default of the tests, so
+    that a House starts without sending anything until the test says so; ``None``
+    stands for a House that has no stored state, as a newly created one.
+    """
 
     def subentry_data(self) -> dict[str, Any]:
         """The subentry as ``MockConfigEntry`` takes it."""
@@ -1059,6 +1071,29 @@ class SimHouse:
         }
 
 
+def _store_switches(hass: HomeAssistant, houses: list[SimHouse]) -> None:
+    """Put the stored switch states of the Houses into the restore cache.
+
+    Like ``mock_restore_cache``, this replaces the restore state helper, so that
+    nothing loaded later overwrites it; what the test stored before is kept.
+    """
+    previous = hass.data.get(restore_state.DATA_RESTORE_STATE)
+    data = restore_state.RestoreStateData(hass)
+    if previous is not None:
+        data.last_states = dict(previous.last_states)
+    now = datetime.now(UTC)
+    for house in houses:
+        for key, state in house.stored_switches.items():
+            entity_id = f"switch.{slugify(f'{house.name} {key}')}"
+            if state is None or entity_id in data.last_states:
+                continue
+            data.last_states[entity_id] = restore_state.StoredState.from_dict(
+                {"state": State(entity_id, state).as_dict(), "last_seen": now}
+            )
+    restore_state.async_get.cache_clear()
+    hass.data[restore_state.DATA_RESTORE_STATE] = data
+
+
 async def setup_entry(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
@@ -1085,6 +1120,7 @@ async def setup_entry(
     if tibber is not None:
         dtu_network.after_apply.append(tibber.register)
     dtu_network.apply()
+    _store_switches(hass, houses or [])
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={},
