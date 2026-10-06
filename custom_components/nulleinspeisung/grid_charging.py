@@ -20,7 +20,7 @@ from homeassistant.helpers.event import (
 )
 from homeassistant.util import dt as dt_util
 
-from . import solar
+from . import solar, sunrise_energy
 from .charging_planner import (
     ChargingPlan,
     PlanReason,
@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 DEFAULT_CHARGE_TARGET = 100.0
 DEFAULT_BATTERY_EFFICIENCY = 78.0
 """Percent, as a round trip."""
+DEFAULT_FORECAST_SHARE = 70.0
+"""Percent of the PV Forecast that is counted."""
 
 PRICE_LEVEL_VERY_CHEAP = "very_cheap"
 PRICE_LEVEL_CHEAP_AND_BELOW = "cheap_and_below"
@@ -92,6 +94,17 @@ class GridCharging:
         self.charge_target = DEFAULT_CHARGE_TARGET
         self.battery_efficiency = DEFAULT_BATTERY_EFFICIENCY
         self.price_levels = DEFAULT_PRICE_LEVELS
+        self.use_forecast = True
+        """Whether the PV Forecast may limit the energy to buy, once it is usable."""
+        self.forecast_share = DEFAULT_FORECAST_SHARE
+        self.forecast_in_use = False
+        """Whether the current plan was computed with the forecast bound."""
+        self.energy_needed: float | None = None
+        """kWh the battery must hold at sunrise; ``None`` when it cannot be told."""
+        self.battery_at_sunrise: float | None = None
+        """kWh expected in the battery at sunrise without any charging."""
+        self.forecast_surplus: float | None = None
+        """kWh of counted forecast above the Expected Load in the 24 h after sunrise."""
         self.plan: ChargingPlan | None = None
         """The current Charging Plan; ``None`` until one could be made."""
         self.deadline: datetime | None = None
@@ -148,6 +161,16 @@ class GridCharging:
         self.price_levels = option
         self._settings_changed()
 
+    def set_use_forecast(self, use: bool) -> None:
+        """Let the PV Forecast limit the energy to buy, or not."""
+        self.use_forecast = use
+        self._settings_changed()
+
+    def set_forecast_share(self, percent: float) -> None:
+        """Change the counted share of the PV Forecast in percent."""
+        self.forecast_share = percent
+        self._settings_changed()
+
     def _settings_changed(self) -> None:
         if self._started:
             self._replan()
@@ -177,6 +200,9 @@ class GridCharging:
             self._unsubs.append(
                 house.grid_publisher.async_add_listener(self._on_publisher)
             )
+        self._unsubs.append(house.expected_load.async_add_listener(self._on_inputs))
+        if house.forecast is not None:
+            self._unsubs.append(house.forecast.async_add_listener(self._on_inputs))
         self._replan()
 
     def stop(self) -> None:
@@ -196,6 +222,11 @@ class GridCharging:
 
     @callback
     def _on_prices(self) -> None:
+        self._replan()
+
+    @callback
+    def _on_inputs(self) -> None:
+        """The PV Forecast or the Expected Load changed."""
         self._replan()
 
     @callback
@@ -252,16 +283,25 @@ class GridCharging:
         prices = house.prices
         capacity = house.config.battery_capacity
         level = battery.charge_level if battery is not None else None
+        self.deadline = solar.next_sunrise(
+            house.config.latitude, house.config.longitude, now
+        )
+        to_store = self._compute_forecast(now, self.deadline, capacity, level)
+        self.forecast_in_use = False
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
             return
         control = house.control
-        self.deadline = solar.next_sunrise(
-            house.config.latitude, house.config.longitude, now
-        )
         self._planned_level = level
         self._planned_power = control.maximum_charge_power
+        forecast = house.forecast
+        bound = (
+            to_store
+            if self.use_forecast and forecast is not None and forecast.usable
+            else None
+        )
+        self.forecast_in_use = bound is not None
         self.plan = plan_charging(
             now=now,
             prices=prices.prices,
@@ -273,6 +313,61 @@ class GridCharging:
             deadline=self.deadline,
             efficiency=self.battery_efficiency / 100.0,
             ignore_efficiency=self.ignore_efficiency,
+            max_energy=bound,
+        )
+
+    def _compute_forecast(
+        self,
+        now: datetime,
+        deadline: datetime,
+        capacity: float | None,
+        level: float | None,
+    ) -> float | None:
+        """Work out the figures of the PV Forecast; return the energy to store.
+
+        They are computed whenever their inputs exist, whether or not the
+        forecast is to be used. Production of Battery-backed Inverters at night is
+        not counted, so the result errs on the side of buying a little more.
+        """
+        house = self._house
+        self.energy_needed = self.battery_at_sunrise = self.forecast_surplus = None
+        forecast = house.forecast
+        if forecast is None:
+            return None
+        slots = forecast.slots
+        if not slots:
+            return None
+        pv = {slot.start: slot.watts for slot in slots}
+        load = dict(house.expected_load.upcoming())
+        share = self.forecast_share / 100.0
+        efficiency = self.battery_efficiency / 100.0
+        prices = house.prices
+        qualifying = PRICE_LEVEL_OPTIONS[self.price_levels]
+        end = sunrise_energy.period_end(
+            deadline, prices.prices if prices is not None else (), qualifying
+        )
+        self.energy_needed = sunrise_energy.energy_needed_at_sunrise(
+            deadline, load, pv, share, end, efficiency
+        )
+        self.forecast_surplus = sunrise_energy.forecast_surplus(
+            deadline, load, pv, share
+        )
+        if capacity is None or level is None:
+            return None
+        blocks: set[datetime] = set()
+        if prices is not None and self._block_applies():
+            blocks = {
+                slot
+                for slot, _ in sunrise_energy.slots(now, deadline)
+                if discharge_block_active(max(slot, now), prices.prices, qualifying)
+            }
+        self.battery_at_sunrise = sunrise_energy.battery_at_sunrise(
+            now, deadline, capacity, level, load, blocks, efficiency
+        )
+        if self.energy_needed is None or self.battery_at_sunrise is None:
+            return None
+        return sunrise_energy.energy_to_store(
+            self.energy_needed, self.battery_at_sunrise
         )
 
     # -- state -------------------------------------------------------------
@@ -310,11 +405,21 @@ class GridCharging:
 
     def _block_wanted(self, now: datetime) -> bool:
         """Whether a Discharge Block is wanted: the rule, and we own a fresh battery."""
+        if not self._block_applies():
+            return False
+        prices = self._house.prices
+        assert prices is not None
+        return discharge_block_active(
+            now, prices.prices, PRICE_LEVEL_OPTIONS[self.price_levels]
+        )
+
+    def _block_applies(self) -> bool:
+        """Whether Grid Charging would apply a Discharge Block at all."""
         house = self._house
         publisher = house.grid_publisher
         battery = house.battery
         prices = house.prices
-        if (
+        return not (
             not self.enabled
             or publisher is None
             or not publisher.enabled
@@ -322,10 +427,6 @@ class GridCharging:
             or not battery.fresh
             or battery.dynamic_ess_mode
             or prices is None
-        ):
-            return False
-        return discharge_block_active(
-            now, prices.prices, PRICE_LEVEL_OPTIONS[self.price_levels]
         )
 
     @property

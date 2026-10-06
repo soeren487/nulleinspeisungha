@@ -28,6 +28,7 @@ from .expected_load import DEFAULT_FALLBACK_KWH
 from .grid_charging import (
     DEFAULT_BATTERY_EFFICIENCY,
     DEFAULT_CHARGE_TARGET,
+    DEFAULT_FORECAST_SHARE,
 )
 from .house import House
 from .house_control import (
@@ -204,6 +205,19 @@ CHARGING_DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
         default=DEFAULT_BATTERY_EFFICIENCY,
         getter=lambda charging: charging.battery_efficiency,
         setter=lambda charging, value: charging.set_battery_efficiency(value),
+    ),
+    HouseNumberDescription(
+        key="forecast_share",
+        translation_key="forecast_share",
+        native_unit_of_measurement=PERCENTAGE,
+        native_min_value=10,
+        native_max_value=100,
+        native_step=5,
+        mode=NumberMode.BOX,
+        entity_category=EntityCategory.CONFIG,
+        default=DEFAULT_FORECAST_SHARE,
+        getter=lambda charging: charging.forecast_share,
+        setter=lambda charging, value: charging.set_forecast_share(value),
     ),
 )
 

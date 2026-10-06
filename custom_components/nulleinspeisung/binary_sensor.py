@@ -77,6 +77,7 @@ async def async_setup_entry(
                 [
                     ChargingBlockedByEfficiencySensor(house),
                     DischargeBlockSensor(house),
+                    ForecastInUseSensor(house),
                 ]
                 if house.grid_charging
                 else []
@@ -218,3 +219,18 @@ class DischargeBlockSensor(ChargingEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Whether the wanted discharge override is 0 W."""
         return self.charging.discharge_block
+
+
+class ForecastInUseSensor(ChargingEntity, BinarySensorEntity):
+    """Whether the current Charging Plan was computed with the PV Forecast."""
+
+    _attr_translation_key = "forecast_in_use"
+
+    def __init__(self, house: House) -> None:
+        """Create the binary sensor."""
+        super().__init__(house, "forecast_in_use", "binary_sensor")
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the forecast bound the energy to buy."""
+        return self.charging.forecast_in_use

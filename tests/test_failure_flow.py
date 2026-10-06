@@ -234,8 +234,11 @@ async def test_all_dtus_down_is_a_failure(
     assert _issue(hass, METER_ISSUE) is None
     dtu.down = False
     dtu_network.apply()
+    # After 60 s the poll is due at 70 s and the control run at 75 s: a tick for
+    # each, so that the order does not depend on the real clock.
+    await _tick(hass, freezer, 10)
     _grid(hass, -500)
-    await _tick(hass, freezer)
+    await _tick(hass, freezer, 5)
     assert _state(hass, "sensor", "control_state") != "failure"
     assert _issue(hass, DTU_ISSUE) is None
 
@@ -326,18 +329,26 @@ async def test_after_a_restart_the_limits_are_sent_again_when_reachable(
     dtu.uptime = 5000
     await _home(hass, dtu_network, dtu, grid=-500)
     await _lowered(hass, dtu_network)
+    # The DTU poll (every 10 s) and the control run (every 15 s) fall due in the
+    # same tick after 30 s, in an order that varies. So after each change of the
+    # DTU a tick brings only the poll (10 s, or 5 s from 45 s), then one only the
+    # control run (5 s).
     _restarted(dtu, dtu_network, reachable=False)
-    for _ in range(2):
-        _grid(hass, -25)
-        await _tick(hass, freezer)
+    await _tick(hass, freezer, 10)  # poll
+    _grid(hass, -25)
+    await _tick(hass, freezer, 5)  # control, at 15 s
+    _grid(hass, -25)
+    await _tick(hass, freezer)  # 30 s: nothing has changed since the poll
     assert dtu_network.limits() == []
     dtu.inverters[0].reachable = True
     dtu_network.apply()
+    await _tick(hass, freezer, 10)  # poll, at 40 s
     _grid(hass, -25)
-    await _tick(hass, freezer)
+    await _tick(hass, freezer, 5)  # control, at 45 s
     assert dtu_network.limits() == [(OMA, 1, 24)]
     dtu.inverters[1].reachable = True
     dtu_network.apply()
+    await _tick(hass, freezer, 5)  # poll, at 50 s
     for _ in range(3):
         _grid(hass, -25)
         await _tick(hass, freezer)
