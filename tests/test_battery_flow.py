@@ -49,7 +49,12 @@ async def test_battery_step_stores_host_port_portal_id_and_capacity(
     gx = register_gx(SimGx("gx-home.test", 1884))
     entry = await setup_entry(hass, dtu_network, SimDtu.default())
     result = await _to_battery_step(hass, entry, inverters=[OMA])
-    assert _fields(result) == ["gx_host", "gx_port", "battery_capacity"]
+    assert _fields(result) == [
+        "gx_host",
+        "gx_port",
+        "battery_capacity",
+        "grid_meter_topic",
+    ]
     assert _defaults(result)["gx_port"] == 1883
     result = await _next(
         hass,
@@ -190,3 +195,73 @@ async def test_reconfigure_can_remove_the_battery(
     assert any(
         s.subentry_type == SUBENTRY_TYPE_HOUSE for s in entry.subentries.values()
     )
+
+
+async def test_grid_meter_topic_is_stored(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    """The topic is trimmed and stored with the House's GX."""
+    gx = register_gx(SimGx("gx-home.test"))
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_battery_step(hass, entry)
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": gx.host, "gx_port": 1883, "grid_meter_topic": " grid/house "},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert _house(entry, "Home").data["grid_meter_topic"] == "grid/house"
+
+
+async def test_a_wildcard_topic_is_refused(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    """A topic with + or # cannot be published to."""
+    gx = register_gx(SimGx("gx-home.test"))
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_battery_step(hass, entry)
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": gx.host, "gx_port": 1883, "grid_meter_topic": "grid/#"},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"grid_meter_topic": "invalid_topic"}
+
+
+async def test_reconfigure_keeps_and_changes_the_topic(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    """The stored topic is suggested; it can be kept as it is or changed."""
+    gx = SimGx("gx-home.test")
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        SimDtu.default(),
+        houses=[SimHouse("Home", gx=gx, grid_topic="grid/old")],
+    )
+    result = await _reconfigure(hass, entry, _house(entry, "Home"))
+    suggestions = {
+        key.schema: key.description["suggested_value"]
+        for key in result["data_schema"].schema
+        if key.description
+    }
+    assert suggestions["grid_meter_topic"] == "grid/old"
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": gx.host, "gx_port": 1883, "grid_meter_topic": "grid/old"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
+    assert _house(entry, "Home").data["grid_meter_topic"] == "grid/old"
+    result = await _reconfigure(hass, entry, _house(entry, "Home"))
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": gx.host, "gx_port": 1883, "grid_meter_topic": "grid/new"},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
+    assert _house(entry, "Home").data["grid_meter_topic"] == "grid/new"

@@ -27,6 +27,7 @@ from custom_components.nulleinspeisung.const import (
     CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GRID_METER_TOPIC,
     CONF_GX_HOST,
     CONF_GX_PORT,
     CONF_GX_PORTAL_ID,
@@ -989,6 +990,8 @@ class SimHouse:
     gx: SimGx | None = None
     """The House's AC Battery; ``None`` for a House without one."""
     capacity: float | None = None
+    grid_topic: str | None = None
+    """Topic the House publishes its Grid Power to; needs an AC Battery."""
 
     def subentry_data(self) -> dict[str, Any]:
         """The subentry as ``MockConfigEntry`` takes it."""
@@ -1011,6 +1014,7 @@ class SimHouse:
                     else {}
                 ),
                 **({CONF_BATTERY_CAPACITY: self.capacity} if self.capacity else {}),
+                **({CONF_GRID_METER_TOPIC: self.grid_topic} if self.grid_topic else {}),
             },
             "unique_id": self.unique_id or f"house-{self.name.casefold()}",
             "title": self.name,

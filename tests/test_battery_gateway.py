@@ -131,6 +131,8 @@ async def test_only_the_needed_topics_are_subscribed(hass: HomeAssistant) -> Non
             f"N/{p}/battery/+/Info/MaxChargeCurrent",
             f"N/{p}/settings/0/Settings/CGwacs/AcPowerSetPoint",
             f"N/{p}/settings/0/Settings/DynamicEss/Mode",
+            f"N/{p}/hub4/0/Overrides/Setpoint",
+            f"N/{p}/hub4/0/Overrides/MaxDischargePower",
         ]
     )
     assert not any("#" in f for f in gx.subscribed_filters)
@@ -204,7 +206,7 @@ async def test_reconnect_subscribes_again_and_asks_for_everything(
     gx.restore()
     await hass.async_block_till_done()
     assert gx.keepalives == [b"", b""]
-    assert len(gx.subscribed_filters) == 6  # the serial filter is not needed again
+    assert len(gx.subscribed_filters) == 8  # the serial filter is not needed again
     state = gateway.state
     assert state.connected
     assert state.fresh
@@ -292,3 +294,48 @@ async def test_probe_times_out_for_a_gx_that_is_down(
 def test_default_probe_timeout_is_about_ten_seconds() -> None:
     """The documented timeout."""
     assert battery_gateway.PROBE_TIMEOUT == 10.0
+
+
+async def test_a_number_and_null_are_written_to_a_path_of_the_gx(
+    hass: HomeAssistant,
+) -> None:
+    """The write goes to W/<portal id>/<path> as {"value": ...}."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    assert gateway.async_write("hub4/0/Overrides/Setpoint", 50.0)
+    assert gateway.async_write("hub4/0/Overrides/Setpoint", None)
+    assert gateway.async_write("hub4/0/Overrides/MaxDischargePower", -1)
+    p = gx.portal_id
+    assert gx.other_publishes == [
+        (f"W/{p}/hub4/0/Overrides/Setpoint", b'{"value": 50.0}'),
+        (f"W/{p}/hub4/0/Overrides/Setpoint", b'{"value": null}'),
+        (f"W/{p}/hub4/0/Overrides/MaxDischargePower", b'{"value": -1}'),
+    ]
+    await gateway.async_stop()
+
+
+async def test_nothing_is_written_while_the_gx_is_away(hass: HomeAssistant) -> None:
+    """A write without a connection is refused and reported as such."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    gx.drop()
+    assert not gateway.async_write("hub4/0/Overrides/Setpoint", None)
+    assert gx.other_publishes == []
+    await gateway.async_stop()
+
+
+async def test_the_two_overrides_appear_in_the_state(hass: HomeAssistant) -> None:
+    """Unset overrides read as unknown; set ones show their value."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    assert gateway.state.setpoint_override is None
+    assert gateway.state.max_discharge_override is None
+    gx.set("hub4/0/Overrides/Setpoint", -200)
+    gx.set("hub4/0/Overrides/MaxDischargePower", 0)
+    assert gateway.state.setpoint_override == -200
+    assert gateway.state.max_discharge_override == 0
+    gx.set("hub4/0/Overrides/Setpoint", None)
+    gx.set("hub4/0/Overrides/MaxDischargePower", None)
+    assert gateway.state.setpoint_override is None
+    assert gateway.state.max_discharge_override is None
+    await gateway.async_stop()

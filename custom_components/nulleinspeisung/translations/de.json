@@ -132,12 +132,14 @@
           "data": {
             "gx_host": "GX-Adresse",
             "gx_port": "MQTT-Port",
-            "battery_capacity": "Nutzbare Kapazität"
+            "battery_capacity": "Nutzbare Kapazität",
+            "grid_meter_topic": "Netzleistungs-Topic"
           },
           "data_description": {
             "gx_host": "Hostname oder IP-Adresse des GX",
             "gx_port": "Port des MQTT-Brokers des GX",
-            "battery_capacity": "Nutzbare Kapazität der AC-Batterie in kWh"
+            "battery_capacity": "Nutzbare Kapazität der AC-Batterie in kWh",
+            "grid_meter_topic": "MQTT-Topic, auf dem die virtuelle Netzmessung der AC-Batterie lauscht. Ohne Topic kann das House die Netzleistung nicht melden."
           }
         }
       },
@@ -147,7 +149,8 @@
         "inverter_assigned": "Ein gewählter Wechselrichter gehört bereits zu einem anderen Haus.",
         "tibber_home_assigned": "Dieses Tibber-Zuhause gehört bereits zu einem anderen Haus.",
         "cannot_connect": "Der GX antwortet unter dieser Adresse und diesem Port nicht.",
-        "gx_assigned": "Dieser GX gehört bereits zu einem anderen Haus."
+        "gx_assigned": "Dieser GX gehört bereits zu einem anderen Haus.",
+        "invalid_topic": "Das Topic darf kein + und kein # enthalten."
       },
       "abort": {
         "reconfigure_successful": "Das Haus wurde aktualisiert."
@@ -275,6 +278,9 @@
       },
       "load_history_days": {
         "name": "Lastverlaufstage"
+      },
+      "reported_grid_power": {
+        "name": "Gemeldete Netzleistung"
       }
     },
     "button": {
@@ -288,6 +294,9 @@
       },
       "curtailment": {
         "name": "Abregelung"
+      },
+      "publish_grid_power": {
+        "name": "Netzleistung melden"
       }
     },
     "number": {
@@ -386,6 +395,14 @@
     "feed_in_conflicts_battery_setpoint": {
       "title": "Einspeise-Sollwert von Haus {house} verlangt mehr Bezug als der Netzsollwert der AC-Batterie",
       "description": "Der negative Einspeise-Sollwert von {house} verlangt mehr Bezug als der im GX der AC-Batterie gespeicherte Netzsollwert. Die Regelung zielt stattdessen auf den Netzsollwert der Batterie. Erhöhe den Netzsollwert am GX oder den Einspeise-Sollwert."
+    },
+    "mqtt_needed": {
+      "title": "MQTT-Integration für House {house} nötig",
+      "description": "Die Netzleistung von {house} soll an die AC-Batterie gemeldet werden, aber die MQTT-Integration von Home Assistant ist nicht eingerichtet. Richte sie ein oder schalte das Melden aus."
+    },
+    "other_grid_publisher": {
+      "title": "Ein anderes System meldet ebenfalls die Netzleistung für House {house}",
+      "description": "Auf dem Topic der Netzmessung von {house} kommen Nachrichten an, die nicht von dieser Integration stammen. Zwei Absender überlagern sich. Schalte den alten Absender (zum Beispiel Node-RED) aus."
     }
   },
   "selector": {

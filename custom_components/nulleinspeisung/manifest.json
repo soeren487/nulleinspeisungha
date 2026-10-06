@@ -1,6 +1,9 @@
 {
   "domain": "nulleinspeisung",
   "name": "Nulleinspeisung",
+  "after_dependencies": [
+    "mqtt"
+  ],
   "codeowners": [
     "@soeren487"
   ],

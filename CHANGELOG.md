@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### New
+
+- **Reported grid power.** A House with an AC battery can publish its grid power to the topic the Victron's grid meter driver reads, taking over from an existing publisher. Set the topic in the House's battery step and switch "publish grid power" on when you hand over; it is off by default. While it is on, the integration warns if another system still publishes to the same topic, and releases setpoint and discharge overrides left on the GX.
+
 ### Fixed
 
 - Adding a DTU whose DTU serial is already used by a different DTU was refused with "this DTU was already added", although it never was. The form now says that another DTU uses the same serial and that each DTU needs its own serial in OpenDTU under Settings > DTU Settings.

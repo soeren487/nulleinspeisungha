@@ -41,6 +41,7 @@ from .const import (
     CONF_BATTERY_CAPACITY,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
+    CONF_GRID_METER_TOPIC,
     CONF_GX_HOST,
     CONF_GX_PORT,
     CONF_GX_PORTAL_ID,
@@ -600,6 +601,11 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             if not host:
                 return self._async_finish()
             port = int(user_input.get(CONF_GX_PORT, DEFAULT_GX_PORT))
+            topic = str(user_input.get(CONF_GRID_METER_TOPIC) or "").strip()
+            if any(c in topic for c in "+#"):
+                errors[CONF_GRID_METER_TOPIC] = "invalid_topic"
+            if errors:
+                return self._show_ac_battery_form(user_input, errors)
             try:
                 portal_id = await async_probe(host, port)
             except GxConnectionError:
@@ -611,13 +617,21 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                     self._collected[CONF_GX_HOST] = host
                     self._collected[CONF_GX_PORT] = port
                     self._collected[CONF_GX_PORTAL_ID] = portal_id
+                    if topic:
+                        self._collected[CONF_GRID_METER_TOPIC] = topic
                     capacity = user_input.get(CONF_BATTERY_CAPACITY)
                     if capacity is not None:
                         self._collected[CONF_BATTERY_CAPACITY] = float(capacity)
                     return self._async_finish()
+        return self._show_ac_battery_form(user_input, errors)
+
+    def _show_ac_battery_form(
+        self, user_input: dict[str, Any] | None, errors: dict[str, str]
+    ) -> SubentryFlowResult:
+        """The AC Battery step's form, with the values entered or stored."""
         values = user_input or self._current()
         suggested: dict[Any, Any] = {}
-        for key in (CONF_GX_HOST, CONF_BATTERY_CAPACITY):
+        for key in (CONF_GX_HOST, CONF_BATTERY_CAPACITY, CONF_GRID_METER_TOPIC):
             if values.get(key) is not None:
                 suggested[key] = {"description": {"suggested_value": values[key]}}
         return self.async_show_form(
@@ -650,6 +664,10 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                             mode=NumberSelectorMode.BOX,
                         )
                     ),
+                    vol.Optional(
+                        CONF_GRID_METER_TOPIC,
+                        **suggested.get(CONF_GRID_METER_TOPIC, {}),
+                    ): TextSelector(),
                 }
             ),
             errors=errors,

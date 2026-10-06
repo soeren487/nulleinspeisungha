@@ -46,6 +46,8 @@ CONF_GX_HOST = "gx_host"
 CONF_GX_PORT = "gx_port"
 CONF_GX_PORTAL_ID = "gx_portal_id"
 CONF_BATTERY_CAPACITY = "battery_capacity"
+CONF_GRID_METER_TOPIC = "grid_meter_topic"
+"""MQTT topic the AC Battery's virtual grid meter listens to."""
 
 DEFAULT_GX_PORT = 1883
 """Port of the MQTT broker built into a Victron GX."""

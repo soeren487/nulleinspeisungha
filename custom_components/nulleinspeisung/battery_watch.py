@@ -21,7 +21,13 @@ CHECK_SECONDS = 15.0
 ISSUE_BATTERY_STALE = "battery_not_answering"
 ISSUE_DYNAMIC_ESS = "dynamic_ess_active"
 ISSUE_SETPOINT_CONFLICT = "feed_in_conflicts_battery_setpoint"
+ISSUE_MQTT_NEEDED = "mqtt_needed"
+ISSUE_OTHER_PUBLISHER = "other_grid_publisher"
 ENGLISH_TITLES = {
+    ISSUE_MQTT_NEEDED: "MQTT integration needed for House {house}",
+    ISSUE_OTHER_PUBLISHER: (
+        "Another system also publishes the grid value for House {house}"
+    ),
     ISSUE_BATTERY_STALE: "AC Battery of House {house} does not answer",
     ISSUE_DYNAMIC_ESS: "Dynamic ESS is active on the AC Battery of House {house}",
     ISSUE_SETPOINT_CONFLICT: (

@@ -132,12 +132,14 @@
           "data": {
             "gx_host": "GX address",
             "gx_port": "MQTT port",
-            "battery_capacity": "Usable capacity"
+            "battery_capacity": "Usable capacity",
+            "grid_meter_topic": "Grid meter topic"
           },
           "data_description": {
             "gx_host": "Host name or IP address of the GX",
             "gx_port": "Port of the GX's MQTT broker",
-            "battery_capacity": "Usable capacity of the AC Battery in kWh"
+            "battery_capacity": "Usable capacity of the AC Battery in kWh",
+            "grid_meter_topic": "MQTT topic the AC Battery's virtual grid meter listens to, on the broker of Home Assistant's MQTT integration. Without a topic the House cannot report its Grid Power."
           }
         }
       },
@@ -147,7 +149,8 @@
         "inverter_assigned": "An Inverter you chose already belongs to another House.",
         "tibber_home_assigned": "This Tibber home already belongs to another House.",
         "cannot_connect": "The GX does not answer on this address and port.",
-        "gx_assigned": "This GX already belongs to another House."
+        "gx_assigned": "This GX already belongs to another House.",
+        "invalid_topic": "The topic must not contain + or #."
       },
       "abort": {
         "reconfigure_successful": "The House was updated."
@@ -275,6 +278,9 @@
       },
       "load_history_days": {
         "name": "Load history days"
+      },
+      "reported_grid_power": {
+        "name": "Reported Grid Power"
       }
     },
     "button": {
@@ -288,6 +294,9 @@
       },
       "curtailment": {
         "name": "Curtailment"
+      },
+      "publish_grid_power": {
+        "name": "Publish Grid Power"
       }
     },
     "number": {
@@ -386,6 +395,14 @@
     "feed_in_conflicts_battery_setpoint": {
       "title": "Feed-in Setpoint of House {house} asks for more import than the AC Battery's grid setpoint",
       "description": "The negative Feed-in Setpoint of {house} asks for more import than the grid setpoint stored in the AC Battery's GX. The control aims for the battery's grid setpoint instead. Raise the grid setpoint on the GX or the Feed-in Setpoint."
+    },
+    "mqtt_needed": {
+      "title": "MQTT integration needed for House {house}",
+      "description": "Publishing the Grid Power of {house} is switched on, but the MQTT integration of Home Assistant is not set up, so nothing is published. Set it up or switch publishing off."
+    },
+    "other_grid_publisher": {
+      "title": "Another system also publishes the grid value for House {house}",
+      "description": "Messages that did not come from this integration arrive on the grid meter topic of {house}. Two senders overlap. Switch off the old sender (for example Node-RED)."
     }
   },
   "selector": {
