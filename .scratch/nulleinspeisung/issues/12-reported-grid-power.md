@@ -4,7 +4,7 @@
 
 **Blocked by:** 08 (Read the AC Battery and give it priority), 11 (Test Victron override and frozen-value behaviour)
 
-**Status:** ready-for-human
+**Status:** resolved
 
 - [x] With the switch on, every Grid Meter update is published in the format the virtual grid meter expects, with the sign it expects
 - [x] With the switch off nothing is published
@@ -16,3 +16,5 @@
 ## Comments
 
 2026-10-06: Built on branch `ticket-12-reported-grid-power`; 615 tests pass twice, linters clean. Publishing goes through Home Assistant's MQTT integration to a topic stored per House, behind a switch that is off by default; every Grid Meter report is published, and there is deliberately no repeat timer, so the driver's 60 s timeout is the dead-man. While the switch is on the House also detects another publisher on its topic and releases overrides left on the GX. Beyond the ticket: a topic containing a wildcard is refused in the form. Remaining, with the owner: the hand-over from his current publisher on the real system, and observing what the AC Battery does when publishing stops and when the same value repeats.
+
+2026-10-06: Closed on the owner's word: the integration publishes the grid power on both Houses, the AC Batteries regulate on it, and his previous publisher is switched off. The one criterion left unticked was not done: what the AC Battery does when publishing stops, and when the same value keeps repeating, has not been observed on the real system. The driver's documented 60 s timeout is what the design relies on.

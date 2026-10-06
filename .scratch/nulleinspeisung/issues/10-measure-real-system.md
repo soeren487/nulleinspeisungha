@@ -4,10 +4,10 @@
 
 **Blocked by:** 06 (Curtail PV Inverters to the Feed-in Setpoint)
 
-**Status:** needs-info
+**Status:** resolved
 
 - [x] Response time from acknowledgement to changed output is measured for an HM and for the HMS Inverter and recorded in the wiki
-- [ ] The Grid Meter sign of both Houses is verified and set correctly
+- [x] The Grid Meter sign of both Houses is verified and set correctly
 - [x] The Garage DTU's Inverter assignment is recorded in the wiki
 - [x] The default Update Interval is confirmed or changed in the spec
 
@@ -22,3 +22,5 @@
 Not established: which House the four HM-600 of the shared DTU feed. An experiment (lower a pair, compare both Houses' balance of AC Battery power minus Grid Power read from the GX devices) was inconclusive: the balances drifted by several hundred watts from load and sun, more than the 450 to 580 W removed. The first run of that experiment recorded nothing because of a bug in the measuring script. Waiting for the owner to confirm the assignment and the sign of each House's Grid Meter sensor in Home Assistant.
 
 2026-10-05: The owner stated the assignment of every Inverter to its House; it is recorded in the private installation inventory. One Inverter of the shared DTU belongs to the other House than its name suggests, and one Inverter is to be left unassigned. Only the sign of each House's Grid Meter sensor is still to be confirmed by the owner.
+
+2026-10-06: The owner confirmed that both Houses' grid power sensors are positive while importing. All points of this ticket are done.

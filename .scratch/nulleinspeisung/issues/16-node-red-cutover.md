@@ -9,3 +9,7 @@
 - [ ] For each House, Node-RED no longer publishes to the virtual grid meter and the integration does
 - [ ] One night with a Charging Plan has been observed per House and matches the plan
 - [ ] Observations and any corrections are recorded in the wiki
+
+## Comments
+
+2026-10-06: The first half has happened: the owner switched his previous publisher off and the integration publishes the grid power for both Houses. Still to do: switch Grid Charging on with a released version and observe one night with a Charging Plan per House.
