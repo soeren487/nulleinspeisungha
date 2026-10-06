@@ -31,6 +31,7 @@ from .coordinator import DtuCoordinator
 from .curtailment import ControlState
 from .dtu_models import InverterSnapshot
 from .entity import (
+    ChargingEntity,
     ControlEntity,
     DtuEntity,
     HouseEntity,
@@ -40,8 +41,12 @@ from .entity import (
     setup_inverter_entities,
 )
 from .forecast import slot_start
+from .grid_charging import GridChargingState
 from .house import House
 from .price_source import PriceLevel
+
+MAX_LISTED_SLOTS = 96
+"""Planned slots listed in an attribute; a day has 96 quarter-hours."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -219,6 +224,17 @@ async def async_setup_entry(
             *(
                 [ReportedGridPowerSensor(house)]
                 if house.grid_publisher is not None
+                else []
+            ),
+            *(
+                [
+                    GridChargingStateSensor(house),
+                    NextChargingStartSensor(house),
+                    ChargingEnergySensor(house, "energy_to_buy"),
+                    ChargingEnergySensor(house, "energy_missing"),
+                    ReferencePriceSensor(house),
+                ]
+                if house.grid_charging is not None
                 else []
             ),
             ExpectedLoadSensor(house),
@@ -682,3 +698,91 @@ class LoadHistoryDaysSensor(_ExpectedLoadSensor):
     def native_value(self) -> int:
         """Number of days with enough records."""
         return self.house.expected_load.learned_days
+
+
+class GridChargingStateSensor(ChargingEntity, SensorEntity):
+    """What Grid Charging is doing."""
+
+    _attr_translation_key = "grid_charging_state"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = tuple(state.value for state in GridChargingState)  # type: ignore[assignment]
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "grid_charging_state", "sensor")
+
+    @property
+    def native_value(self) -> str:
+        """The state of Grid Charging."""
+        return self.charging.state.value
+
+
+class NextChargingStartSensor(ChargingEntity, SensorEntity):
+    """When the next planned quarter-hour starts, or the running one started."""
+
+    _attr_translation_key = "next_charging_start"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "next_charging_start", "sensor")
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Start of the slot being charged in or the next planned one."""
+        return self.charging.next_start()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, list[str]]:
+        """The planned slots as ISO start times."""
+        plan = self.charging.plan
+        slots = plan.slots[:MAX_LISTED_SLOTS] if plan is not None else ()
+        return {"slots": [slot.start.isoformat() for slot in slots]}
+
+
+class ChargingEnergySensor(ChargingEntity, SensorEntity):
+    """An energy of the Charging Plan in kWh."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, house: House, key: str) -> None:
+        """Create the sensor ``energy_to_buy`` or ``energy_missing``."""
+        super().__init__(house, key, "sensor")
+        self._attr_translation_key = key
+        self._key = key
+
+    @property
+    def native_value(self) -> float | None:
+        """The energy, unknown without a plan."""
+        plan = self.charging.plan
+        if plan is None:
+            return None
+        return (
+            plan.energy_to_buy if self._key == "energy_to_buy" else plan.energy_missing
+        )
+
+
+class ReferencePriceSensor(ChargingEntity, SensorEntity):
+    """The price the energy bought by Grid Charging is expected to replace."""
+
+    _attr_translation_key = "reference_price"
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "reference_price", "sensor")
+
+    @property
+    def native_value(self) -> float | None:
+        """The Reference Price, unknown when none could be formed."""
+        plan = self.charging.plan
+        return plan.reference_price if plan is not None else None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Currency per kWh."""
+        prices = self.house.prices
+        currency = prices.currency if prices else None
+        return f"{currency}/kWh" if currency else None

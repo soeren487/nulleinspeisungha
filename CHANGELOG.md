@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Charging the AC battery from the grid.** A House with an AC battery, Tibber prices and a usable capacity can charge its battery in the cheapest quarter-hours before the next sunrise, across midnight. It has its own device, "<House> Netzladen" (English "<House> Grid charging"), below the House device. Switch "Aus dem Netz laden" ("Charge from grid") turns it on; it is off by default, because it spends money. Choose the Charge target (default 100 %) and the price level at which charging is allowed: only very cheap, cheap and very cheap (default), or normal and cheaper. The plan is made again at every quarter-hour, when new prices arrive, when you change a setting and when the charge level moves by a percentage point. During a planned quarter-hour the battery charges at the maximum charge power; afterwards it is released. Switching it off, losing the prices, losing the battery or switching off "Send grid power to Victron" releases the battery at once. Nothing is charged while Dynamic ESS is active on the GX. Sensors show the state, the start of the next charging, the energy to buy, the energy missing and the reference price; the sensor "Next charging start" lists all planned quarter-hours in its attribute "slots".
+- **Efficiency check.** A battery gives back only part of what is charged into it: the setting "AC battery efficiency" (default 78 %, as a round trip) says how much. A quarter-hour is only used for charging if its price is at most this share of the reference price, which is the mean price of the quarter-hours after sunrise that are not cheap enough to charge in, over the following 24 hours. If cheap quarter-hours exist but none passes the check, nothing is charged and the binary sensor "Grid charging blocked by efficiency" is on. Switch "Ignore efficiency check" skips the check; it is off by default. The efficiency also decides how much energy is bought: for every kWh that should end up in the battery, a little more is taken from the grid.
+
 ## 0.3.1
 
 ### Changed

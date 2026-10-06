@@ -40,6 +40,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). All decisions below come
 | Stuck DTU detection | By day, when production must be possible but a DTU's inverters are unreachable or deliver no fresh data, restart it after 2 to 3 minutes. Hangs also begin at night and show when the inverters wake up. It happens up to several times a day |
 | Grid charging slots | Charge at maximum charge power in the cheapest quarter-hours before the deadline, restricted to configurable price levels (default cheap and very cheap). Replanned when prices arrive and as the charge level changes. Needs usable battery capacity per house |
 | Grid charging switch | Can be switched off manually per house |
+| Battery efficiency | Added by Soeren on 2026-10-06: the Victron batteries return about 78 % of what is charged. Configurable per house; grid charging uses a quarter-hour only if its price is at most the efficiency times the price the energy will later replace; the house shows when that blocks charging, and a switch (off by default) overrides it |
 | Grid charging target and deadline | Target charge level configurable per house, default 100 %. Deadline is sunrise |
 | Discharge block | While grid charging is switched on, the AC battery is not discharged during any quarter-hour whose price level is cheap or very cheap |
 | PV forecast | Wanted in the first version, with the location configurable per house, so that a sunny next day reduces grid charging |

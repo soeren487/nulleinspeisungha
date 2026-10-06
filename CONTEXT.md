@@ -90,6 +90,14 @@ _Avoid_: Target SoC, goal
 The set of upcoming quarter-hours in which Grid Charging will run for a House.
 _Avoid_: Schedule, slots
 
+**Battery Efficiency**:
+The share of the energy charged into an AC Battery from the grid that comes back out to the House, as a round trip.
+_Avoid_: Losses, round-trip factor
+
+**Reference Price**:
+The price the energy bought by Grid Charging is expected to replace: what the House would otherwise pay when it later uses that energy.
+_Avoid_: Comparison price, later price
+
 **Discharge Block**:
 A period during which an AC Battery must not discharge, because the Price Level is low and the stored energy is worth more later.
 _Avoid_: Hold, discharge lock

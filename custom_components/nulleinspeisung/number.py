@@ -23,8 +23,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import NulleinspeisungConfigEntry
-from .entity import HouseEntity, setup_house_entities
+from .entity import ChargingEntity, HouseEntity, setup_house_entities
 from .expected_load import DEFAULT_FALLBACK_KWH
+from .grid_charging import (
+    DEFAULT_BATTERY_EFFICIENCY,
+    DEFAULT_CHARGE_TARGET,
+)
 from .house import House
 from .house_control import (
     DEFAULT_FEED_IN_SETPOINT,
@@ -176,6 +180,34 @@ DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
 )
 
 
+CHARGING_DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
+    HouseNumberDescription(
+        key="charge_target",
+        translation_key="charge_target",
+        native_unit_of_measurement=PERCENTAGE,
+        native_min_value=10,
+        native_max_value=100,
+        native_step=1,
+        mode=NumberMode.BOX,
+        default=DEFAULT_CHARGE_TARGET,
+        getter=lambda charging: charging.charge_target,
+        setter=lambda charging, value: charging.set_charge_target(value),
+    ),
+    HouseNumberDescription(
+        key="battery_efficiency",
+        translation_key="battery_efficiency",
+        native_unit_of_measurement=PERCENTAGE,
+        native_min_value=50,
+        native_max_value=100,
+        native_step=1,
+        mode=NumberMode.BOX,
+        default=DEFAULT_BATTERY_EFFICIENCY,
+        getter=lambda charging: charging.battery_efficiency,
+        setter=lambda charging, value: charging.set_battery_efficiency(value),
+    ),
+)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NulleinspeisungConfigEntry,
@@ -186,11 +218,18 @@ async def async_setup_entry(
         hass,
         entry,
         async_add_entities,
-        lambda house: [
-            HouseNumber(house, d)
-            for d in DESCRIPTIONS
-            if house.gateway is not None or not d.battery_only
-        ],
+        lambda house: (
+            [
+                HouseNumber(house, d)
+                for d in DESCRIPTIONS
+                if house.gateway is not None or not d.battery_only
+            ]
+            + (
+                [ChargingNumber(house, d) for d in CHARGING_DESCRIPTIONS]
+                if house.grid_charging is not None
+                else []
+            )
+        ),
     )
 
 
@@ -232,3 +271,33 @@ class HouseNumber(HouseEntity, RestoreNumber):
         """Change the setting; it takes effect from the next run."""
         self.entity_description.setter(self._target, value)
         self.async_write_ha_state()
+
+
+class ChargingNumber(ChargingEntity, RestoreNumber):
+    """A setting of a House's Grid Charging, kept across restarts."""
+
+    entity_description: HouseNumberDescription
+
+    def __init__(self, house: House, description: HouseNumberDescription) -> None:
+        """Create the number."""
+        super().__init__(house, description.key, "number")
+        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        """Take over the value the owner left, if any."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_number_data()
+        if last is not None and last.native_value is not None:
+            description = self.entity_description
+            value = float(last.native_value)
+            if description.native_min_value <= value <= description.native_max_value:
+                description.setter(self.charging, value)
+
+    @property
+    def native_value(self) -> float:
+        """The current setting."""
+        return self.entity_description.getter(self.charging)
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Change the setting; the plan is made again."""
+        self.entity_description.setter(self.charging, value)

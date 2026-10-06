@@ -120,8 +120,11 @@ async def async_setup_entry(
         house.control.start()
         entry.async_on_unload(house.battery_watch.stop)
         house.battery_watch.start()
-        entry.async_on_unload(house.override_release.stop)
-        house.override_release.start()
+        entry.async_on_unload(house.override_control.stop)
+        house.override_control.start()
+        if house.grid_charging is not None:
+            entry.async_on_unload(house.grid_charging.stop)
+            house.grid_charging.start()
         if house.grid_publisher is not None:
             entry.async_on_unload(house.grid_publisher.stop)
             house.grid_publisher.start()

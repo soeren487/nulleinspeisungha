@@ -17,6 +17,7 @@ from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
 from .dtu_models import InverterSnapshot
 from .entity import (
+    ChargingEntity,
     DtuEntity,
     HouseEntity,
     InverterEntity,
@@ -72,6 +73,11 @@ async def async_setup_entry(
             ExpectedLoadLearnedSensor(house),
             *([ForecastUsableSensor(house)] if house.forecast else []),
             *([BatteryConnectedSensor(house)] if house.gateway else []),
+            *(
+                [ChargingBlockedByEfficiencySensor(house)]
+                if house.grid_charging
+                else []
+            ),
         ],
     )
 
@@ -179,3 +185,18 @@ class ExpectedLoadLearnedSensor(HouseEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Whether enough days of history exist."""
         return self.house.expected_load.learned
+
+
+class ChargingBlockedByEfficiencySensor(ChargingEntity, BinarySensorEntity):
+    """Whether the Battery Efficiency is what keeps Grid Charging from charging."""
+
+    _attr_translation_key = "charging_blocked_by_efficiency"
+
+    def __init__(self, house: House) -> None:
+        """Create the binary sensor."""
+        super().__init__(house, "charging_blocked_by_efficiency", "binary_sensor")
+
+    @property
+    def is_on(self) -> bool:
+        """Whether quarter-hours qualify by Price Level but none is worth it."""
+        return self.charging.blocked_by_efficiency

@@ -160,6 +160,9 @@
   "device": {
     "inverter_control": {
       "name": "{house} Wechselrichter-Regelung"
+    },
+    "grid_charging": {
+      "name": "{house} Netzladen"
     }
   },
   "entity": {
@@ -181,6 +184,9 @@
       },
       "expected_load_learned": {
         "name": "Erwartete Last gelernt"
+      },
+      "charging_blocked_by_efficiency": {
+        "name": "Netzladen durch Wirkungsgrad blockiert"
       }
     },
     "sensor": {
@@ -286,6 +292,33 @@
       },
       "reported_grid_power": {
         "name": "Gemeldete Netzleistung"
+      },
+      "grid_charging_state": {
+        "name": "Netzladen",
+        "state": {
+          "off": "Aus",
+          "not_in_control": "Nicht in Regelung",
+          "battery_unavailable": "Batterie nicht verfügbar",
+          "dynamic_ess_active": "Dynamic ESS aktiv",
+          "no_prices": "Keine Preise",
+          "target_reached": "Ziel erreicht",
+          "no_qualifying_slot": "Keine passende Viertelstunde",
+          "blocked_by_efficiency": "Durch Wirkungsgrad blockiert",
+          "waiting": "Wartet",
+          "charging": "Lädt"
+        }
+      },
+      "next_charging_start": {
+        "name": "Nächster Ladebeginn"
+      },
+      "energy_to_buy": {
+        "name": "Zu kaufende Energie"
+      },
+      "energy_missing": {
+        "name": "Fehlende Energie"
+      },
+      "reference_price": {
+        "name": "Referenzpreis"
       }
     },
     "button": {
@@ -302,6 +335,12 @@
       },
       "publish_grid_power": {
         "name": "Netzleistung an Victron senden"
+      },
+      "grid_charging": {
+        "name": "Aus dem Netz laden"
+      },
+      "ignore_efficiency": {
+        "name": "Wirkungsgrad-Prüfung übergehen"
       }
     },
     "number": {
@@ -328,6 +367,12 @@
       },
       "fallback_daily_consumption": {
         "name": "Ersatz-Tagesverbrauch"
+      },
+      "charge_target": {
+        "name": "Ladeziel"
+      },
+      "battery_efficiency": {
+        "name": "Wirkungsgrad der AC-Batterie"
       }
     },
     "select": {
@@ -336,6 +381,14 @@
         "state": {
           "hold": "Letzte Grenzen halten",
           "full": "Alle auf 100 % setzen"
+        }
+      },
+      "charge_price_levels": {
+        "name": "Laden bei Preisniveau",
+        "state": {
+          "very_cheap": "Nur sehr günstig",
+          "cheap_and_below": "Günstig und sehr günstig",
+          "normal_and_below": "Normal und günstiger"
         }
       }
     }

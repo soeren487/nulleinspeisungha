@@ -13,6 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from . import NulleinspeisungConfigEntry
 from .coordinator import DtuCoordinator
 from .entity import (
+    ChargingEntity,
     ControlEntity,
     DtuEntity,
     HouseEntity,
@@ -40,6 +41,11 @@ async def async_setup_entry(
             *(
                 [PublishGridPowerSwitch(house)]
                 if house.grid_publisher is not None
+                else []
+            ),
+            *(
+                [GridChargingSwitch(house), IgnoreEfficiencySwitch(house)]
+                if house.grid_charging is not None
                 else []
             ),
         ],
@@ -166,3 +172,67 @@ class PublishGridPowerSwitch(HouseEntity, SwitchEntity, RestoreEntity):
         """Stop publishing."""
         await self._publisher.async_set_enabled(False)
         self.async_write_ha_state()
+
+
+def _stored_on(last: State | None) -> bool:
+    """Whether a charging switch is on: only if it was left on."""
+    return last is not None and last.state == STATE_ON
+
+
+class GridChargingSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
+    """Whether the House charges its AC Battery from the grid in cheap hours."""
+
+    _attr_translation_key = "grid_charging"
+
+    def __init__(self, house: House) -> None:
+        """Create the switch."""
+        super().__init__(house, "grid_charging", "switch")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the position the owner left it in; off for a new House."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        # Only the flag is set; Grid Charging starts once everything is restored.
+        self.charging.enabled = _stored_on(last)
+
+    @property
+    def is_on(self) -> bool:
+        """Whether Grid Charging is switched on."""
+        return self.charging.enabled
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Switch Grid Charging on."""
+        self.charging.set_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Switch Grid Charging off; the battery is released at once."""
+        self.charging.set_enabled(False)
+
+
+class IgnoreEfficiencySwitch(ChargingEntity, SwitchEntity, RestoreEntity):
+    """Whether Grid Charging skips the test against the Battery Efficiency."""
+
+    _attr_translation_key = "ignore_efficiency"
+
+    def __init__(self, house: House) -> None:
+        """Create the switch."""
+        super().__init__(house, "ignore_efficiency", "switch")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the position the owner left it in; off by default."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        self.charging.ignore_efficiency = _stored_on(last)
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the efficiency test is skipped."""
+        return self.charging.ignore_efficiency
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Skip the efficiency test."""
+        self.charging.set_ignore_efficiency(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Apply the efficiency test."""
+        self.charging.set_ignore_efficiency(False)

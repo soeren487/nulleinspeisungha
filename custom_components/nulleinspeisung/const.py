@@ -60,6 +60,7 @@ SIGN_EXPORT = "export"
 HOUSE_MODEL = "House"
 INVERTER_MAKER = "Hoymiles"
 CONTROL_MODEL = "Inverter control"
+CHARGING_MODEL = "Grid charging"
 
 CONF_TIBBER_TOKEN = "tibber_token"
 CONF_TIBBER_HOME = "tibber_home"
