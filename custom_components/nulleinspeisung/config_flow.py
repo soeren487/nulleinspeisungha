@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,7 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    ConfigSubentry,
     ConfigSubentryFlow,
     OptionsFlow,
     SubentryFlowResult,
@@ -46,6 +48,7 @@ from .const import (
     CONF_LATITUDE,
     CONF_LOCATION,
     CONF_LONGITUDE,
+    CONF_MAC,
     CONF_NAME,
     CONF_NOTIFY_TARGET,
     CONF_PASSWORD,
@@ -208,24 +211,54 @@ class DtuSubentryFlow(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         """Ask for address and password of a new DTU."""
         errors: dict[str, str] = {}
+        placeholders: dict[str, str] = {"existing": ""}
         if user_input is not None:
             identity = await self._async_identify(user_input, errors)
             if identity is not None:
-                if any(
-                    subentry.unique_id == identity.serial
-                    for subentry in self._get_entry().subentries.values()
-                ):
-                    return self.async_abort(reason="already_configured")
-                return self.async_create_entry(
-                    title=identity.hostname,
-                    data=self._data(user_input),
-                    unique_id=identity.serial,
+                existing = next(
+                    (
+                        subentry
+                        for subentry in self._get_entry().subentries.values()
+                        if subentry.unique_id == identity.serial
+                    ),
+                    None,
                 )
+                if existing is None:
+                    return self.async_create_entry(
+                        title=identity.hostname,
+                        data=self._data(user_input, identity),
+                        unique_id=identity.serial,
+                    )
+                if await self._is_other_device(existing, identity):
+                    errors[CONF_URL] = "duplicate_serial"
+                    placeholders["existing"] = existing.title
+                else:
+                    return self.async_abort(reason="already_configured")
         return self.async_show_form(
             step_id="user",
             data_schema=self.add_suggested_values_to_schema(DTU_SCHEMA, user_input),
             errors=errors,
+            description_placeholders=placeholders,
         )
+
+    async def _is_other_device(
+        self, existing: ConfigSubentry, identity: DtuIdentity
+    ) -> bool:
+        """Whether the DTU has the serial of ``existing`` but is another device.
+
+        The hardware addresses decide. The existing DTU is asked for its own
+        when none is stored (added before they were); if either is unknown the
+        answer is ``False``.
+        """
+        if identity.mac is None:
+            return False
+        mac = existing.data.get(CONF_MAC)
+        if mac is None:
+            try:
+                mac = (await self._async_client(existing.data).async_identify()).mac
+            except DtuAuthError, DtuConnectionError:
+                return False
+        return mac is not None and mac != identity.mac
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -242,7 +275,7 @@ class DtuSubentryFlow(ConfigSubentryFlow):
                     self._get_entry(),
                     subentry,
                     title=identity.hostname,
-                    data=self._data(user_input),
+                    data=self._data(user_input, identity),
                 )
         return self.async_show_form(
             step_id="reconfigure",
@@ -262,23 +295,26 @@ class DtuSubentryFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any], errors: dict[str, str]
     ) -> DtuIdentity | None:
         """Ask the DTU who it is; on failure put the reason into ``errors``."""
-        client = DtuClient(
-            async_get_clientsession(self.hass),
-            user_input[CONF_URL],
-            user_input[CONF_PASSWORD],
-        )
         try:
-            return await client.async_identify()
+            return await self._async_client(user_input).async_identify()
         except DtuAuthError:
             errors["base"] = "invalid_auth"
         except DtuConnectionError:
             errors["base"] = "cannot_connect"
         return None
 
+    def _async_client(self, data: Mapping[str, Any]) -> DtuClient:
+        """A client for the DTU with the address and password in ``data``."""
+        return DtuClient(
+            async_get_clientsession(self.hass), data[CONF_URL], data[CONF_PASSWORD]
+        )
+
     @staticmethod
-    def _data(user_input: dict[str, Any]) -> dict[str, Any]:
+    def _data(user_input: dict[str, Any], identity: DtuIdentity) -> dict[str, Any]:
         """What is stored for the DTU."""
+        mac = {CONF_MAC: identity.mac} if identity.mac else {}
         return {
+            **mac,
             CONF_URL: normalize_base_url(user_input[CONF_URL]),
             CONF_PASSWORD: user_input[CONF_PASSWORD],
             CONF_SUN_ANGLE: float(user_input.get(CONF_SUN_ANGLE, DEFAULT_SUN_ANGLE)),

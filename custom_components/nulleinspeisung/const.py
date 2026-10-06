@@ -8,6 +8,8 @@ SUBENTRY_TYPE_DTU = "dtu"
 
 CONF_URL = "url"
 CONF_PASSWORD = "password"
+CONF_MAC = "mac"
+"""Hardware address of a DTU, lower case without separators."""
 
 DTU_USER = "admin"
 """OpenDTU's administrator user name; it cannot be changed on the DTU."""
