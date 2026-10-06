@@ -6,6 +6,7 @@
 
 - The two House switches have clearer names. "Curtailment" is now "Regulate feed-in" ("Einspeisung regeln"), and "Publish grid power" is now "Send grid power to Victron" ("Netzleistung an Victron senden"). Entity ids and unique ids stay the same.
 - Both switches are on by default for a newly created House. A House that already exists keeps the state its switches have, on or off.
+- The inverter control of a House has its own device, "<House> Wechselrichter-Regelung" (English "<House> Inverter control"), below the House device. It holds the switch "Regulate feed-in", the numbers Feed-in Setpoint, Update Interval, tolerance band, limit floor, limit slew rate and response reserve, the select "On failure", and the sensors control state, Inverter Limit and Battery-backed Inverter Limit. Everything else stays on the House device. For an existing House the entities move by themselves; entity ids, states and history are kept.
 
 ### Fixed
 

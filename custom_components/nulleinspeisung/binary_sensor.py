@@ -65,6 +65,7 @@ async def async_setup_entry(
     )
     setup_dtu_entities(entry, async_add_entities, lambda c: [DtuStuckSensor(c)])
     setup_house_entities(
+        hass,
         entry,
         async_add_entities,
         lambda house: [

@@ -34,6 +34,7 @@ from .const import (
     CONF_TIBBER_HOME,
     DEFAULT_GX_PORT,
     DOMAIN,
+    INVERTER_MAKER,
     SIGN_EXPORT,
     SIGN_IMPORT,
     SUBENTRY_TYPE_HOUSE,
@@ -354,7 +355,7 @@ def known_inverters(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, str]:
 
     registry = dr.async_get(hass)
     for device in dr.async_entries_for_config_entry(registry, entry.entry_id):
-        if device.via_device_id is None:
+        if device.via_device_id is None or device.manufacturer != INVERTER_MAKER:
             continue
         via = registry.async_get(device.via_device_id)
         for domain, serial in device.identifiers:

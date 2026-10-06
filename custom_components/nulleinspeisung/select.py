@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import NulleinspeisungConfigEntry
-from .entity import HouseEntity, setup_house_entities
+from .entity import ControlEntity, setup_house_entities
 from .house import House
 from .house_control import ON_FAILURE_OPTIONS
 
@@ -21,11 +21,11 @@ async def async_setup_entry(
 ) -> None:
     """Set up the failure choice of every House."""
     setup_house_entities(
-        entry, async_add_entities, lambda house: [OnFailureSelect(house)]
+        hass, entry, async_add_entities, lambda house: [OnFailureSelect(house)]
     )
 
 
-class OnFailureSelect(HouseEntity, SelectEntity, RestoreEntity):
+class OnFailureSelect(ControlEntity, SelectEntity, RestoreEntity):
     """What the House does with its Inverters when its control has failed."""
 
     _attr_translation_key = "on_failure"
@@ -33,7 +33,7 @@ class OnFailureSelect(HouseEntity, SelectEntity, RestoreEntity):
 
     def __init__(self, house: House) -> None:
         """Create the select."""
-        super().__init__(house, "on_failure")
+        super().__init__(house, "on_failure", "select")
         self._attr_options = list(ON_FAILURE_OPTIONS)
 
     async def async_added_to_hass(self) -> None:

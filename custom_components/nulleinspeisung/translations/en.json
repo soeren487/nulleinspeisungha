@@ -157,6 +157,11 @@
       }
     }
   },
+  "device": {
+    "inverter_control": {
+      "name": "{house} Inverter control"
+    }
+  },
   "entity": {
     "binary_sensor": {
       "reachable": {
