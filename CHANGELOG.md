@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 ### New
 
@@ -14,6 +14,13 @@
 - The support raises the content the AC battery is expected to have at sunrise, so it only changes the plan where the PV forecast is used (once it is usable, with "Use PV forecast" on).
 - The 85 % conversion is an assumption, not a measurement.
 - Restart Home Assistant after updating, then open the House settings once to name the sensors.
+
+### Good to know
+
+- **Name the sensors once per House:** open the House's settings, go to the step "DC batteries" and pick, for each battery-backed inverter, the sensors that report the energy stored behind it. Use the stored-energy sensors (Wh or kWh), not the charge level in percent.
+- **No effect on the plan until the PV forecast is in use.** The two new sensors show values from the start.
+- **Three recorded nights** are needed before any output is counted. Recording starts with this version.
+- Restart Home Assistant after updating.
 
 ## 0.5.0
 
