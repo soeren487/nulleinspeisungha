@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
@@ -22,6 +22,7 @@ from .battery_watch import BatteryWatch
 from .const import (
     CONF_BATTERY_BACKED,
     CONF_BATTERY_CAPACITY,
+    CONF_DC_BATTERIES,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
     CONF_GRID_METER_TOPIC,
@@ -39,6 +40,12 @@ from .const import (
     SIGN_IMPORT,
     SUBENTRY_TYPE_HOUSE,
 )
+from .dc_battery import (
+    StoredEnergy,
+    house_stored_energy,
+    stored_energy_by_inverter,
+)
+from .dc_battery_history import DcBatteryHistory
 from .dtu_client import DtuClient
 from .dtu_models import DtuSnapshot
 from .expected_load import ExpectedLoad
@@ -90,12 +97,17 @@ class HouseConfig:
     """Usable capacity of the AC Battery in kWh."""
     grid_meter_topic: str | None = None
     """Topic to publish Grid Power to; only meaningful with an AC Battery."""
+    dc_batteries: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    """Per Battery-backed Inverter, the sensors of the energy in its DC Batteries."""
 
     @classmethod
     def from_subentry(cls, subentry: ConfigSubentry) -> HouseConfig:
         """Read a House from its config subentry."""
         data = subentry.data
         inverters = tuple(data.get(CONF_INVERTERS, ()))
+        battery_backed = tuple(
+            s for s in data.get(CONF_BATTERY_BACKED, ()) if s in inverters
+        )
         return cls(
             subentry_id=subentry.subentry_id,
             unique_id=subentry.unique_id or subentry.subentry_id,
@@ -105,15 +117,25 @@ class HouseConfig:
             grid_meter=data[CONF_GRID_METER],
             grid_meter_sign=data.get(CONF_GRID_METER_SIGN, SIGN_IMPORT),
             inverters=inverters,
-            battery_backed=tuple(
-                s for s in data.get(CONF_BATTERY_BACKED, ()) if s in inverters
-            ),
+            battery_backed=battery_backed,
             tibber_home=data.get(CONF_TIBBER_HOME) or None,
             gx_host=data.get(CONF_GX_HOST) or None,
             gx_port=int(data.get(CONF_GX_PORT, DEFAULT_GX_PORT)),
             gx_portal_id=data.get(CONF_GX_PORTAL_ID) or None,
             battery_capacity=data.get(CONF_BATTERY_CAPACITY),
             grid_meter_topic=data.get(CONF_GRID_METER_TOPIC) or None,
+            dc_batteries={
+                serial: tuple(entity_ids)
+                for serial, entity_ids in (data.get(CONF_DC_BATTERIES) or {}).items()
+                if serial in battery_backed and entity_ids
+            },
+        )
+
+    @property
+    def dc_battery_sensors(self) -> tuple[str, ...]:
+        """Every sensor named for the energy in the DC Batteries, without repeats."""
+        return tuple(
+            dict.fromkeys(e for ids in self.dc_batteries.values() for e in ids)
         )
 
     @property
@@ -201,6 +223,10 @@ class House:
         """
         if forecast is not None:
             forecast.attach(self)
+        self.dc_history: DcBatteryHistory | None = (
+            DcBatteryHistory(hass, self) if config.battery_backed else None
+        )
+        """The usual output of the Battery-backed Inverters; ``None`` without any."""
         self.expected_load = ExpectedLoad(hass, self)
         """The House's Expected Load; every House has one.
 
@@ -314,6 +340,14 @@ class House:
     def pv_production(self) -> float | None:
         """Production of the assigned PV Inverters in W."""
         return self.production(self.config.pv_inverters)
+
+    def dc_battery_energy(self) -> dict[str, StoredEnergy]:
+        """The energy stored behind each Inverter that has sensors named."""
+        return stored_energy_by_inverter(self.config.dc_batteries, self.hass.states.get)
+
+    def dc_battery_total(self) -> StoredEnergy:
+        """The energy stored behind all of the House's Battery-backed Inverters."""
+        return house_stored_energy(self.dc_battery_energy())
 
     def battery_backed_production(self) -> float | None:
         """Production of the assigned Battery-backed Inverters in W."""

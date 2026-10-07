@@ -8,13 +8,14 @@ the grid while a planned quarter-hour is on.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from homeassistant.core import CALLBACK_TYPE, callback
+from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, callback
 from homeassistant.helpers.event import (
+    async_track_state_change_event,
     async_track_time_interval,
     async_track_utc_time_change,
 )
@@ -27,6 +28,7 @@ from .charging_planner import (
     discharge_block_active,
     plan_charging,
 )
+from .dc_battery import dc_battery_support, sensor_kwh
 from .price_source import PriceLevel
 
 if TYPE_CHECKING:
@@ -53,6 +55,8 @@ DEFAULT_PRICE_LEVELS = PRICE_LEVEL_CHEAP_AND_BELOW
 
 REPLAN_LEVEL_STEP = 1.0
 """Percentage points the charge level may move before the plan is made again."""
+DC_ENERGY_STEP = 0.05
+"""kWh a DC Battery sensor may move before the plan is made again."""
 SETPOINT_TOLERANCE = 50.0
 """W the wanted setpoint must move by before it is changed."""
 SETPOINT_INTERVAL = 10.0
@@ -105,12 +109,15 @@ class GridCharging:
         """kWh expected in the battery at sunrise without any charging."""
         self.forecast_surplus: float | None = None
         """kWh of counted forecast above the Expected Load in the 24 h after sunrise."""
+        self.dc_support: float | None = None
+        """kWh of DC Battery Support until sunrise; ``None`` without sensors."""
         self.plan: ChargingPlan | None = None
         """The current Charging Plan; ``None`` until one could be made."""
         self.deadline: datetime | None = None
         """The sunrise the plan was made for."""
         self._planned_level: float | None = None
         self._planned_power: float | None = None
+        self._planned_dc: dict[str, float] = {}
         self._last_wanted: int | None = None
         self._started = False
         self._unsubs: list[CALLBACK_TYPE] = []
@@ -201,6 +208,12 @@ class GridCharging:
                 house.grid_publisher.async_add_listener(self._on_publisher)
             )
         self._unsubs.append(house.expected_load.async_add_listener(self._on_inputs))
+        if house.config.dc_battery_sensors:
+            self._unsubs.append(
+                async_track_state_change_event(
+                    house.hass, house.config.dc_battery_sensors, self._on_dc_sensor
+                )
+            )
         if house.forecast is not None:
             self._unsubs.append(house.forecast.async_add_listener(self._on_inputs))
         self._replan()
@@ -228,6 +241,14 @@ class GridCharging:
     def _on_inputs(self) -> None:
         """The PV Forecast or the Expected Load changed."""
         self._replan()
+
+    @callback
+    def _on_dc_sensor(self, event: Event[EventStateChangedData]) -> None:
+        """A DC Battery sensor changed: replan if it moved by a noticeable amount."""
+        entity_id = event.data["entity_id"]
+        now = sensor_kwh(event.data["new_state"]) or 0.0
+        if abs(now - self._planned_dc.get(entity_id, 0.0)) >= DC_ENERGY_STEP:
+            self._replan()
 
     @callback
     def _on_quarter(self, _now: datetime) -> None:
@@ -286,7 +307,8 @@ class GridCharging:
         self.deadline = solar.next_sunrise(
             house.config.latitude, house.config.longitude, now
         )
-        to_store = self._compute_forecast(now, self.deadline, capacity, level)
+        support = self._compute_dc_support(now, self.deadline)
+        to_store = self._compute_forecast(now, self.deadline, capacity, level, support)
         self.forecast_in_use = False
         if prices is None or capacity is None or level is None:
             self.plan = None
@@ -322,12 +344,14 @@ class GridCharging:
         deadline: datetime,
         capacity: float | None,
         level: float | None,
+        support: Mapping[datetime, float] | None = None,
     ) -> float | None:
         """Work out the figures of the PV Forecast; return the energy to store.
 
         They are computed whenever their inputs exist, whether or not the
-        forecast is to be used. Production of Battery-backed Inverters at night is
-        not counted, so the result errs on the side of buying a little more.
+        forecast is to be used. Production of Battery-backed Inverters by day is
+        not counted, so the result errs on the side of buying a little more; their
+        ``support`` at night lowers what the AC Battery delivers until sunrise.
         """
         house = self._house
         self.energy_needed = self.battery_at_sunrise = self.forecast_surplus = None
@@ -362,13 +386,41 @@ class GridCharging:
                 if discharge_block_active(max(slot, now), prices.prices, qualifying)
             }
         self.battery_at_sunrise = sunrise_energy.battery_at_sunrise(
-            now, deadline, capacity, level, load, blocks, efficiency
+            now, deadline, capacity, level, load, blocks, efficiency, support
         )
         if self.energy_needed is None or self.battery_at_sunrise is None:
             return None
         return sunrise_energy.energy_to_store(
             self.energy_needed, self.battery_at_sunrise
         )
+
+    def _compute_dc_support(
+        self, now: datetime, deadline: datetime
+    ) -> Mapping[datetime, float] | None:
+        """The DC Battery Support until ``deadline`` in W per quarter-hour.
+
+        ``None`` for a House without sensors named for its DC Batteries.
+        ``dc_support`` is its energy in kWh.
+        """
+        house = self._house
+        self._planned_dc = {}
+        self.dc_support = None
+        sensors = house.config.dc_batteries
+        if not sensors:
+            return None
+        get_state = house.hass.states.get
+        for entity_id in house.config.dc_battery_sensors:
+            self._planned_dc[entity_id] = sensor_kwh(get_state(entity_id)) or 0.0
+        outputs = house.dc_history.usual_output() if house.dc_history else {}
+        stored = {
+            serial: sum(self._planned_dc[e] for e in entity_ids)
+            for serial, entity_ids in sensors.items()
+        }
+        support = dc_battery_support(
+            now, deadline, outputs, stored, dt_util.get_default_time_zone()
+        )
+        self.dc_support = support.kwh
+        return support.watts
 
     # -- state -------------------------------------------------------------
 

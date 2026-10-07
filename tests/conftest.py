@@ -781,6 +781,29 @@ def seed_load_history(
     }
 
 
+def seed_dc_output_history(
+    hass_storage: dict[str, Any],
+    house_unique_id: str,
+    series: dict[str, list[tuple[datetime, float]]],
+) -> None:
+    """Put the output records of Battery-backed Inverters into the storage.
+
+    ``series`` maps an Inverter's serial to (start of the quarter-hour, mean W).
+    """
+    key = f"{DOMAIN}.dc_output_history_{house_unique_id}"
+    hass_storage[key] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": key,
+        "data": {
+            "series": {
+                serial: [[int(start.timestamp()), w] for start, w in records]
+                for serial, records in series.items()
+            }
+        },
+    }
+
+
 VICTRON_FIXTURE_DIR = Path(__file__).parent / "fixtures" / "victron"
 
 
@@ -1050,6 +1073,8 @@ class SimHouse:
     capacity: float | None = None
     grid_topic: str | None = None
     """Topic the House publishes its Grid Power to; needs an AC Battery."""
+    dc_batteries: dict[str, list[str]] = field(default_factory=dict)
+    """Per Battery-backed Inverter, the sensors of the energy in its DC Batteries."""
     stored_switches: dict[str, str | None] = field(
         default_factory=lambda: {"curtailment": "off", "publish_grid_power": "off"}
     )
@@ -1083,6 +1108,7 @@ class SimHouse:
                 ),
                 **({CONF_BATTERY_CAPACITY: self.capacity} if self.capacity else {}),
                 **({CONF_GRID_METER_TOPIC: self.grid_topic} if self.grid_topic else {}),
+                **({"dc_batteries": self.dc_batteries} if self.dc_batteries else {}),
             },
             "unique_id": self.unique_id or f"house-{self.name.casefold()}",
             "title": self.name,

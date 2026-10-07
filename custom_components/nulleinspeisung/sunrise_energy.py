@@ -5,8 +5,10 @@ mappings from the start of a quarter-hour (timezone-aware) to W. Energies are in
 kWh. The efficiency is the Battery Efficiency as a round-trip fraction; the
 discharging half of the loss is its square root.
 
-Known simplification: the production of Battery-backed Inverters at night is not
-counted, so the energy needed errs on the side of a little more.
+Known simplification: the production of Battery-backed Inverters by day is not
+counted, so the energy needed errs on the side of a little more. Their support
+at night (DC Battery Support) lowers what the battery delivers in
+``battery_at_sunrise``.
 """
 
 from __future__ import annotations
@@ -91,6 +93,7 @@ def battery_at_sunrise(
     load: Mapping[datetime, float],
     blocks: Collection[datetime],
     efficiency: float,
+    support: Mapping[datetime, float] | None = None,
 ) -> float | None:
     """The content expected at ``deadline`` without any charging, in kWh.
 
@@ -99,6 +102,10 @@ def battery_at_sunrise(
     quarter-hour from ``now`` that is not in ``blocks`` (the starts of
     Discharge Blocks); never below 0. The current quarter-hour counts with its
     remaining fraction. ``None`` when a needed Expected Load is missing.
+
+    ``support`` is the DC Battery Support in W per quarter-hour: the AC Battery
+    then delivers the load minus the support, not below 0, in a quarter-hour
+    that is not a Discharge Block.
     """
     content = capacity_kwh * charge_level / 100.0
     root = math.sqrt(efficiency)
@@ -108,6 +115,8 @@ def battery_at_sunrise(
         watts = load.get(slot)
         if watts is None:
             return None
+        if support is not None:
+            watts = max(watts - support.get(slot, 0.0), 0.0)
         content = max(content - watts * hours / 1000.0 / root, 0.0)
     return content
 

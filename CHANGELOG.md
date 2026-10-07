@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### New
+
+- **Grid charging counts on the DC batteries at night.** For each battery-backed inverter you can now name, in the House settings (new step "DC-Batterien" / "DC batteries"), the sensors that report the energy stored in its DC batteries, in Wh or kWh. One inverter can have several sensors, for example one per DC battery. Grid charging then expects those inverters to deliver their usual output until the stored energy, reduced by an assumed conversion loss of 15 % (85 % arrives as AC energy), is used up. The AC battery has to deliver that much less before sunrise, so the plan buys correspondingly less. Without sensors nothing changes.
+- The usual output of each battery-backed inverter is learned from its own history: the House records it per quarter-hour and uses, for each quarter-hour of the day, the value that is reached or exceeded on about one night in five (the 80th percentile of the last 21 days), so that a few nights with empty DC batteries do not pull a fixed output down. **It needs a few nights of history before it counts anything:** a quarter-hour of the day counts once it was recorded on 3 days; until then the support is 0. The history starts when you install this version, whether or not you have named sensors yet.
+- A sensor that is missing, unknown or unavailable counts as empty, so after a dull day with empty DC batteries (or when the sensor's cloud service is down) no support is counted and the plan buys what it would have bought before.
+- Two new sensors on the grid charging device, only for Houses with named DC battery sensors: "Energie in den DC-Batterien" ("Energy in DC batteries", the stored energy of all named sensors, unknown while none gives a value) and "Erwartete Unterstützung der DC-Batterien bis Sonnenaufgang" ("Expected DC battery support until sunrise"). The plan is made again when one of the named sensors changes by 0.05 kWh or more.
+
+### Good to know
+
+- The support raises the content the AC battery is expected to have at sunrise, so it only changes the plan where the PV forecast is used (once it is usable, with "Use PV forecast" on).
+- The 85 % conversion is an assumption, not a measurement.
+- Restart Home Assistant after updating, then open the House settings once to name the sensors.
+
 ## 0.5.0
 
 ### New

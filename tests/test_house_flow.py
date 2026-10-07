@@ -102,16 +102,19 @@ async def _create(
     result = await _next(hass, result, {"inverters": inverters})
     if inverters:
         result = await _next(hass, result, {"battery_backed": battery_backed})
+    if battery_backed:
+        assert result["step_id"] == "dc_batteries"
+        result = await _next(hass, result, {})
     assert result["step_id"] == "ac_battery"
     result = await _next(hass, result, {})
     await hass.async_block_till_done()
     return result
 
 
-async def test_create_house_through_four_steps(
+async def test_create_house_through_all_steps(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
-    """The four steps store the House and the owner can see it listed."""
+    """The steps store the House and the owner can see it listed."""
     entry = await setup_entry(hass, dtu_network, SimDtu.default())
     result = await _start(hass, entry)
     assert result["step_id"] == "user"
@@ -127,6 +130,8 @@ async def test_create_house_through_four_steps(
     assert result["step_id"] == "battery_backed"
     assert sorted(_offered(result, "battery_backed")) == sorted([OMA, BUERO4])
     result = await _next(hass, result, {"battery_backed": [BUERO4]})
+    assert result["step_id"] == "dc_batteries"
+    result = await _next(hass, result, {})
     assert result["step_id"] == "ac_battery"
     assert _defaults(result)["gx_port"] == 1883
     result = await _next(hass, result, {})
@@ -227,6 +232,7 @@ async def test_inverters_of_two_dtus_in_one_house(
     result = await _next(hass, result, {"inverters": [OMA, GARAGE_1]})
     result = await _next(hass, result, {"battery_backed": [GARAGE_1]})
     result = await _next(hass, result, {})
+    result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
     data = _house(entry, "Home").data
@@ -270,6 +276,7 @@ async def test_reconfigure_changes_everything(
     defaults = _defaults(result)
     assert defaults["battery_backed"] == [BUERO4]
     result = await _next(hass, result, {"battery_backed": [GARAGE_2]})
+    result = await _next(hass, result, {})
     result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
@@ -338,3 +345,212 @@ async def test_inverters_of_a_down_dtu_are_still_offered(
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
     assert list(_house(entry, "Home").data["inverters"]) == [OMA]
+
+
+# -- the DC Batteries -----------------------------------------------------------
+
+LABEL_BUERO4 = "Büro 4 (OpenDTU-Buero, HM-1500-4T)"
+LABEL_OMA = "OmaOpa (OpenDTU-Buero, HM-600-4T)"
+SENSORS_A = ["sensor.dc_a1_energy", "sensor.dc_a2_energy"]
+SENSORS_B = ["sensor.dc_b_energy"]
+
+
+def _fields(result: ConfigFlowResult) -> list[str]:
+    """The names of the fields of a form."""
+    return [str(key) for key in result["data_schema"].schema]
+
+
+def _suggested(result: ConfigFlowResult) -> dict[str, Any]:
+    """The values a form suggests, by field name."""
+    return {
+        str(key): key.description["suggested_value"]
+        for key in result["data_schema"].schema
+        if key.description and "suggested_value" in key.description
+    }
+
+
+async def _to_dc_step(
+    hass: HomeAssistant, entry: ConfigEntry, backed: list[str]
+) -> ConfigFlowResult:
+    result = await _start(hass, entry)
+    result = await _next(hass, result, _first("Home"))
+    result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+    return await _next(hass, result, {"battery_backed": backed})
+
+
+async def test_the_dc_battery_step_has_a_field_per_battery_backed_inverter(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_dc_step(hass, entry, [OMA, BUERO4])
+    assert result["step_id"] == "dc_batteries"
+    assert _fields(result) == [LABEL_OMA, LABEL_BUERO4]
+    selectors = list(result["data_schema"].schema.values())
+    assert all(isinstance(sel, selector.EntitySelector) for sel in selectors)
+    assert all(
+        sel.config["multiple"] and sel.config["domain"] == ["sensor"]
+        for sel in selectors
+    )
+
+    only_one = await _to_dc_step(hass, entry, [BUERO4])
+    assert _fields(only_one) == [LABEL_BUERO4]
+
+
+async def test_the_dc_battery_step_is_skipped_without_battery_backed_inverters(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_dc_step(hass, entry, [])
+    assert result["step_id"] == "ac_battery"
+
+    result = await _start(hass, entry)
+    result = await _next(hass, result, _first("Empty"))
+    result = await _next(hass, result, {"inverters": []})
+    assert result["step_id"] == "ac_battery"
+
+
+async def test_the_sensors_are_stored_per_inverter_serial(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_dc_step(hass, entry, [OMA, BUERO4])
+    result = await _next(hass, result, {LABEL_OMA: SENSORS_B, LABEL_BUERO4: SENSORS_A})
+    assert result["step_id"] == "ac_battery"
+    result = await _next(hass, result, {})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert dict(_house(entry, "Home").data["dc_batteries"]) == {
+        OMA: SENSORS_B,
+        BUERO4: SENSORS_A,
+    }
+
+
+async def test_an_inverter_without_sensors_has_no_entry(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(hass, dtu_network, SimDtu.default())
+    result = await _to_dc_step(hass, entry, [OMA, BUERO4])
+    result = await _next(hass, result, {LABEL_BUERO4: SENSORS_A})
+    await _next(hass, result, {})
+    await hass.async_block_till_done()
+    assert dict(_house(entry, "Home").data["dc_batteries"]) == {BUERO4: SENSORS_A}
+
+
+async def test_reconfigure_prefills_changes_and_clears_the_sensors(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        SimDtu.default(),
+        houses=[
+            SimHouse("Home", inverters=[OMA, BUERO4], battery_backed=[OMA, BUERO4])
+        ],
+    )
+    house = _house(entry, "Home")
+    hass.config_entries.async_update_subentry(
+        entry,
+        house,
+        data={**house.data, "dc_batteries": {OMA: SENSORS_B, BUERO4: SENSORS_A}},
+    )
+    await hass.async_block_till_done()
+    house = _house(entry, "Home")
+
+    async def walk(
+        dc_input: dict[str, Any], prefilled: dict[str, Any]
+    ) -> ConfigFlowResult:
+        result = await _start(hass, entry, house)
+        result = await _next(hass, result, _first("Home"))
+        result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+        result = await _next(hass, result, {"battery_backed": [OMA, BUERO4]})
+        assert result["step_id"] == "dc_batteries"
+        assert _suggested(result) == prefilled
+        result = await _next(hass, result, dc_input)
+        result = await _next(hass, result, {})
+        assert result["type"] is FlowResultType.ABORT
+        await hass.async_block_till_done()
+        return result
+
+    await walk(
+        {LABEL_OMA: SENSORS_B, LABEL_BUERO4: SENSORS_B},
+        {LABEL_OMA: SENSORS_B, LABEL_BUERO4: SENSORS_A},
+    )
+    assert dict(_house(entry, "Home").data["dc_batteries"]) == {
+        OMA: SENSORS_B,
+        BUERO4: SENSORS_B,
+    }
+    house = _house(entry, "Home")
+    await walk({LABEL_OMA: SENSORS_B}, {LABEL_OMA: SENSORS_B, LABEL_BUERO4: SENSORS_B})
+    assert dict(_house(entry, "Home").data["dc_batteries"]) == {OMA: SENSORS_B}
+    house = _house(entry, "Home")
+    # clearing every field removes the mapping
+    result = await _start(hass, entry, house)
+    result = await _next(hass, result, _first("Home"))
+    result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+    result = await _next(hass, result, {"battery_backed": [OMA, BUERO4]})
+    result = await _next(hass, result, {})
+    await _next(hass, result, {})
+    await hass.async_block_till_done()
+    assert "dc_batteries" not in _house(entry, "Home").data
+
+
+async def test_an_inverter_no_longer_battery_backed_loses_its_entry(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        SimDtu.default(),
+        houses=[
+            SimHouse("Home", inverters=[OMA, BUERO4], battery_backed=[OMA, BUERO4])
+        ],
+    )
+    house = _house(entry, "Home")
+    hass.config_entries.async_update_subentry(
+        entry,
+        house,
+        data={**house.data, "dc_batteries": {OMA: SENSORS_B, BUERO4: SENSORS_A}},
+    )
+    await hass.async_block_till_done()
+
+    result = await _start(hass, entry, _house(entry, "Home"))
+    result = await _next(hass, result, _first("Home"))
+    result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+    result = await _next(hass, result, {"battery_backed": [BUERO4]})
+    assert _fields(result) == [LABEL_BUERO4]
+    assert _suggested(result) == {LABEL_BUERO4: SENSORS_A}
+    result = await _next(hass, result, {LABEL_BUERO4: SENSORS_A})
+    await _next(hass, result, {})
+    await hass.async_block_till_done()
+    data = _house(entry, "Home").data
+    assert dict(data["dc_batteries"]) == {BUERO4: SENSORS_A}
+
+    # no Battery-backed Inverter at all: the mapping is gone
+    result = await _start(hass, entry, _house(entry, "Home"))
+    result = await _next(hass, result, _first("Home"))
+    result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+    result = await _next(hass, result, {"battery_backed": []})
+    assert result["step_id"] == "ac_battery"
+    await _next(hass, result, {})
+    await hass.async_block_till_done()
+    assert "dc_batteries" not in _house(entry, "Home").data
+
+
+async def test_a_house_stored_before_the_mapping_existed_loads(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        SimDtu.default(),
+        houses=[SimHouse("Home", inverters=[OMA, BUERO4], battery_backed=[BUERO4])],
+    )
+    assert "dc_batteries" not in _house(entry, "Home").data
+    [house] = entry.runtime_data.houses.values()
+    assert house.config.dc_batteries == {}
+    assert house.dc_battery_total().configured == 0
+    result = await _start(hass, entry, _house(entry, "Home"))
+    result = await _next(hass, result, _first("Home"))
+    result = await _next(hass, result, {"inverters": [OMA, BUERO4]})
+    result = await _next(hass, result, {"battery_backed": [BUERO4]})
+    assert _suggested(result) == {}

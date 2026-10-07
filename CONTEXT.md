@@ -102,6 +102,10 @@ _Avoid_: Comparison price, later price
 A period during which an AC Battery must not discharge, because the Price Level is low and the stored energy is worth more later.
 _Avoid_: Hold, discharge lock
 
+**DC Battery Support**:
+The energy a House's Battery-backed Inverters are expected to deliver from their DC Batteries until the next sunrise, which the AC Battery then does not have to deliver.
+_Avoid_: Night support, Solix contribution
+
 ### Forecast
 
 **PV Forecast**:

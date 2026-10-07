@@ -126,6 +126,10 @@
             "battery_backed": "Wechselrichter, deren Eingang eine DC-Batterie ist"
           }
         },
+        "dc_batteries": {
+          "title": "DC-Batterien",
+          "description": "Wähle für jeden batteriegestützten Wechselrichter die Sensoren, die die in seinen DC-Batterien gespeicherte Energie in Wh oder kWh melden. Ein Wechselrichter kann mehrere haben. Das Netzladen rechnet dann mit der Energie, die diese Wechselrichter bis Sonnenaufgang abgeben. Lasse das Feld leer, wenn ein Wechselrichter keine solchen Sensoren hat; ein nicht verfügbarer Sensor zählt als leer."
+        },
         "ac_battery": {
           "title": "AC-Batterie",
           "description": "Wenn das Haus eine AC-Batterie hat, gib die Adresse ihres Victron GX ein. Lass die Adresse leer, wenn es keine gibt. Der GX muss MQTT ohne Passwort auf diesem Port erlauben.",
@@ -334,6 +338,12 @@
       },
       "forecast_surplus": {
         "name": "PV-Überschuss laut Prognose"
+      },
+      "dc_battery_energy": {
+        "name": "Energie in den DC-Batterien"
+      },
+      "dc_battery_support": {
+        "name": "Erwartete Unterstützung der DC-Batterien bis Sonnenaufgang"
       }
     },
     "button": {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
@@ -39,6 +40,7 @@ from .battery_gateway import GxConnectionError, async_probe
 from .const import (
     CONF_BATTERY_BACKED,
     CONF_BATTERY_CAPACITY,
+    CONF_DC_BATTERIES,
     CONF_GRID_METER,
     CONF_GRID_METER_SIGN,
     CONF_GRID_METER_TOPIC,
@@ -349,8 +351,10 @@ NO_TIBBER_HOME = "none"
 class HouseSubentryFlow(ConfigSubentryFlow):
     """Add a House, or change everything about it later.
 
-    Four steps: the House itself, its Inverters, which of those are
-    Battery-backed (skipped when there are none), and the AC Battery.
+    Five steps: the House itself, its Inverters, which of those are
+    Battery-backed (skipped when there are none), the sensors of the energy stored
+    in their DC Batteries (skipped when there are no Battery-backed Inverters),
+    and the AC Battery.
     """
 
     def __init__(self) -> None:
@@ -577,7 +581,7 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             self._collected[CONF_BATTERY_BACKED] = [
                 s for s in chosen if s in user_input[CONF_BATTERY_BACKED]
             ]
-            return await self.async_step_ac_battery()
+            return await self.async_step_dc_batteries()
         previous = self._current().get(CONF_BATTERY_BACKED, [])
         return self.async_show_form(
             step_id="battery_backed",
@@ -591,10 +595,66 @@ class HouseSubentryFlow(ConfigSubentryFlow):
             ),
         )
 
+    def _dc_fields(self, serials: list[str]) -> dict[str, str]:
+        """The field of each Battery-backed Inverter, field name to serial.
+
+        The name of a field is what the owner reads, so it is the Inverter's label;
+        two Inverters with the same label get their serial added.
+        """
+        known = known_inverters(self.hass, self._get_entry())
+        labels = {serial: known.get(serial, serial) for serial in serials}
+        counts = Counter(labels.values())
+        return {
+            (
+                f"{label} ({serial})"
+                if counts[label] > 1 and label != serial
+                else label
+            ): (serial)
+            for serial, label in labels.items()
+        }
+
+    async def async_step_dc_batteries(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Step four: the sensors of the energy stored behind each Battery-backed
+        Inverter. Skipped when the House has none.
+        """
+        backed = list(self._collected.get(CONF_BATTERY_BACKED, []))
+        if not backed:
+            return await self.async_step_ac_battery()
+        fields = self._dc_fields(backed)
+        if user_input is not None:
+            mapping = {
+                serial: list(dict.fromkeys(user_input[name]))
+                for name, serial in fields.items()
+                if user_input.get(name)
+            }
+            if mapping:
+                self._collected[CONF_DC_BATTERIES] = mapping
+            return await self.async_step_ac_battery()
+        previous = self._current().get(CONF_DC_BATTERIES) or {}
+        selector = EntitySelector(EntitySelectorConfig(domain="sensor", multiple=True))
+        return self.async_show_form(
+            step_id="dc_batteries",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        name,
+                        **(
+                            {"description": {"suggested_value": list(previous[serial])}}
+                            if previous.get(serial)
+                            else {}
+                        ),
+                    ): selector
+                    for name, serial in fields.items()
+                }
+            ),
+        )
+
     async def async_step_ac_battery(
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
-        """Step four: the GX of the House's AC Battery, if it has one."""
+        """Step five: the GX of the House's AC Battery, if it has one."""
         errors: dict[str, str] = {}
         if user_input is not None:
             host = str(user_input.get(CONF_GX_HOST) or "").strip()

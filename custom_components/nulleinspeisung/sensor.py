@@ -236,6 +236,14 @@ async def async_setup_entry(
                     SunriseEnergySensor(house, "energy_needed_at_sunrise"),
                     SunriseEnergySensor(house, "battery_at_sunrise"),
                     SunriseEnergySensor(house, "forecast_surplus"),
+                    *(
+                        [
+                            DcBatteryEnergySensor(house),
+                            DcBatterySupportSensor(house),
+                        ]
+                        if house.config.dc_batteries
+                        else []
+                    ),
                 ]
                 if house.grid_charging is not None
                 else []
@@ -815,3 +823,56 @@ class SunriseEnergySensor(ChargingEntity, SensorEntity):
         if self._key == "battery_at_sunrise":
             return charging.battery_at_sunrise
         return charging.forecast_surplus
+
+
+class DcBatteryEnergySensor(ChargingEntity, SensorEntity):
+    """The energy stored in the DC Batteries behind the House's Inverters."""
+
+    _attr_translation_key = "dc_battery_energy"
+    _attr_device_class = SensorDeviceClass.ENERGY_STORAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "dc_battery_energy", "sensor")
+
+    async def async_added_to_hass(self) -> None:
+        """Also write the state whenever one of the named sensors changes."""
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, self.house.config.dc_battery_sensors, self._handle_change
+            )
+        )
+
+    @property
+    def native_value(self) -> float | None:
+        """The energy of all named sensors, unknown while none is readable."""
+        total = self.house.dc_battery_total()
+        return total.kwh if total.readable else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, int]:
+        """How many of the named sensors gave a value."""
+        total = self.house.dc_battery_total()
+        return {"readable_sensors": total.readable, "sensors": total.configured}
+
+
+class DcBatterySupportSensor(ChargingEntity, SensorEntity):
+    """The energy the DC Batteries are expected to deliver until sunrise."""
+
+    _attr_translation_key = "dc_battery_support"
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "dc_battery_support", "sensor")
+
+    @property
+    def native_value(self) -> float | None:
+        """The DC Battery Support of the current plan."""
+        return self.charging.dc_support

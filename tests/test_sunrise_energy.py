@@ -225,3 +225,80 @@ def test_the_surplus_looks_24_hours_ahead_and_needs_the_load() -> None:
     forecast = series(DEADLINE, 30, 1000.0)
     assert forecast_surplus(DEADLINE, load, forecast, 1.0) == pytest.approx(24.0)
     assert forecast_surplus(DEADLINE, series(DEADLINE, 1, 0.0), forecast, 1.0) is None
+
+
+# -- with DC Battery Support --------------------------------------------------------
+
+
+def test_support_lowers_what_the_battery_delivers() -> None:
+    load = series(NOW, 9, 400.0)
+    support = series(NOW, 9, 300.0)
+    without = battery_at_sunrise(NOW, DEADLINE, 10.0, 100.0, load, set(), 1.0)
+    with_support = battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 100.0, load, set(), 1.0, support
+    )
+    assert without == pytest.approx(10.0 - 0.4 * 9)
+    assert with_support == pytest.approx(10.0 - 0.1 * 9)
+
+
+def test_support_never_lowers_the_drain_below_zero() -> None:
+    """A support above the load does not charge the battery."""
+    load = series(NOW, 9, 100.0)
+    support = series(NOW, 9, 300.0)
+    assert battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 50.0, load, set(), 1.0, support
+    ) == pytest.approx(5.0)
+
+
+def test_the_floor_is_per_quarter_hour() -> None:
+    """Surplus support in one quarter-hour is not carried into the next one."""
+    load = {NOW: 100.0, NOW + SLOT: 500.0}
+    support = {NOW: 400.0, NOW + SLOT: 0.0}
+    end = NOW + 2 * SLOT
+    result = battery_at_sunrise(NOW, end, 10.0, 50.0, load, set(), 1.0, support)
+    assert result == pytest.approx(5.0 - 0.5 * 0.25)
+
+
+def test_support_in_a_discharge_block_changes_nothing() -> None:
+    load = series(NOW, 9, 400.0)
+    support = series(NOW, 9, 300.0)
+    blocks = {NOW + i * SLOT for i in range(8)}
+    blocked = battery_at_sunrise(NOW, DEADLINE, 10.0, 100.0, load, blocks, 1.0)
+    with_support = battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 100.0, load, blocks, 1.0, support
+    )
+    assert blocked == pytest.approx(10.0 - 0.4 * 7)
+    assert with_support == pytest.approx(10.0 - 0.1 * 7)
+    # support only in blocked quarter-hours: no difference at all
+    in_blocks = dict.fromkeys(blocks, 300.0)
+    assert battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 100.0, load, blocks, 1.0, in_blocks
+    ) == pytest.approx(blocked)
+
+
+def test_without_a_support_series_the_result_is_the_old_one() -> None:
+    load = series(NOW, 9, 400.0)
+    blocks = {NOW + 4 * SLOT}
+    plain = battery_at_sunrise(NOW, DEADLINE, 10.0, 80.0, load, blocks, ROOT**2)
+    assert (
+        battery_at_sunrise(NOW, DEADLINE, 10.0, 80.0, load, blocks, ROOT**2, None)
+        == plain
+    )
+    assert (
+        battery_at_sunrise(NOW, DEADLINE, 10.0, 80.0, load, blocks, ROOT**2, {})
+        == plain
+    )
+
+
+def test_support_and_efficiency_work_together() -> None:
+    load = series(NOW, 9, 400.0)
+    support = series(NOW, 9, 250.0)
+    result = battery_at_sunrise(NOW, DEADLINE, 10.0, 100.0, load, set(), 0.64, support)
+    assert result == pytest.approx(10.0 - 0.15 * 9 / 0.8)
+
+
+def test_a_missing_load_is_still_unknown_with_support() -> None:
+    assert (
+        battery_at_sunrise(NOW, DEADLINE, 10.0, 100.0, {}, set(), 1.0, {NOW: 100.0})
+        is None
+    )
