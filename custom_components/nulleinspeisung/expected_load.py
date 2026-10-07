@@ -2,25 +2,22 @@
 
 Samples the House's consumption, keeps a history per finished quarter-hour
 across restarts and provides the Expected Load of coming quarter-hours (see
-``expected_load_model``). It is the sibling of the PV Forecast; the two share
-only ``slot_start`` because the PV Forecast's slots also carry flags and
-irradiance and its records have another layout.
+``expected_load_model``). The sampling and storing of the history is the
+``QuarterRecorder``, which the usual output of the DC Batteries uses as well; the
+PV Forecast has its own, because its records carry more.
 """
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_track_time_interval,
     async_track_utc_time_change,
 )
-from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN
@@ -32,35 +29,18 @@ from .expected_load_model import (
     learn,
 )
 from .forecast import slot_start
+from .quarter_recorder import SINGLE, QuarterRecorder
 
 if TYPE_CHECKING:
     from .house import House
 
-_LOGGER = logging.getLogger(__name__)
-
 SAMPLE_EVERY = timedelta(seconds=30)
 SLOT = timedelta(minutes=15)
-MIN_COVERED = SLOT.total_seconds() / 2
-"""Seconds of a quarter-hour that valid samples must cover to record it."""
-MAX_SAMPLE_COVER = SAMPLE_EVERY.total_seconds()
-"""Seconds one sample may cover at most."""
 KEEP_HISTORY = timedelta(days=35)
-SAVE_EVERY = timedelta(minutes=15)
-STORAGE_VERSION = 1
 DEFAULT_FALLBACK_KWH = 10.0
 """Daily consumption in kWh assumed until a week of history exists."""
 HORIZON_SLOTS = 192
 """48 hours of quarter-hours."""
-
-
-@dataclass
-class _Slot:
-    """The quarter-hour being observed."""
-
-    start: datetime
-    total: float = 0.0
-    count: int = 0
-    covered: float = 0.0
 
 
 def storage_key(house_unique_id: str) -> str:
@@ -75,17 +55,12 @@ class ExpectedLoad:
         """Create the Expected Load; ``async_start`` makes it work."""
         self._hass = hass
         self._house = house
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, storage_key(house.config.unique_id)
+        self._recorder = QuarterRecorder(
+            hass, storage_key(house.config.unique_id), KEEP_HISTORY
         )
         self._listeners: list[CALLBACK_TYPE] = []
         self._unsubs: list[CALLBACK_TYPE] = []
         self._stopped = False
-        self._records: list[LoadRecord] = []
-        self._dirty = False
-        self._last_save: datetime | None = None
-        self._slot: _Slot | None = None
-        self._last_sample: datetime | None = None
         self._fallback_kwh = DEFAULT_FALLBACK_KWH
         self._profile = self._learn(dt_util.utcnow())
 
@@ -94,7 +69,7 @@ class ExpectedLoad:
     @property
     def history(self) -> tuple[LoadRecord, ...]:
         """The recorded quarter-hours, oldest first."""
-        return tuple(self._records)
+        return self._recorder.history()
 
     @property
     def fallback_kwh(self) -> float:
@@ -152,9 +127,9 @@ class ExpectedLoad:
 
     async def async_start(self) -> None:
         """Load the history, then sample and follow the clock."""
-        await self._async_load()
         now = dt_util.utcnow()
-        self._last_sample = now
+        await self._recorder.async_load(now)
+        self._recorder.start(now)
         self._recompute(now)
         self._unsubs.append(
             async_track_time_interval(self._hass, self._handle_sample, SAMPLE_EVERY)
@@ -171,49 +146,11 @@ class ExpectedLoad:
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
-        await self._async_save(force=True)
-
-    # -- history ------------------------------------------------------------
-
-    async def _async_load(self) -> None:
-        stored = await self._store.async_load()
-        records: list[LoadRecord] = []
-        for row in (stored or {}).get("records", []):
-            try:
-                start, watts = row
-                records.append(
-                    LoadRecord(
-                        dt_util.utc_from_timestamp(float(start)),
-                        max(float(watts), 0.0),
-                    )
-                )
-            except TypeError, ValueError:
-                _LOGGER.warning("Ignoring an unreadable consumption record")
-        records.sort(key=lambda record: record.start)
-        self._records = records
-        self._prune(dt_util.utcnow())
-
-    async def _async_save(self, force: bool = False) -> None:
-        if not self._dirty:
-            return
-        now = dt_util.utcnow()
-        if not force and self._last_save and now - self._last_save < SAVE_EVERY:
-            return
-        self._dirty = False
-        self._last_save = now
-        await self._store.async_save(
-            {"records": [[int(r.start.timestamp()), r.watts] for r in self._records]}
-        )
-
-    def _prune(self, now: datetime) -> None:
-        keep = [r for r in self._records if r.start >= now - KEEP_HISTORY]
-        if len(keep) != len(self._records):
-            self._records = keep
-            self._dirty = True
+        await self._recorder.async_save(force=True)
 
     def _learn(self, now: datetime) -> LoadProfile:
         return learn(
-            self._records,
+            self._recorder.history(),
             dt_util.get_default_time_zone(),
             fallback_watts(self._fallback_kwh),
             now,
@@ -224,47 +161,20 @@ class ExpectedLoad:
 
     # -- sampling -------------------------------------------------------------
 
-    def _roll(self, now: datetime) -> None:
-        """Finish the observed quarter-hour if ``now`` is in a later one."""
-        start = slot_start(now)
-        slot = self._slot
-        if slot is not None and slot.start >= start:
-            return
-        if slot is not None:
-            self._finish(slot)
-        self._slot = _Slot(start)
-
-    def _finish(self, slot: _Slot) -> None:
-        if slot.count == 0 or slot.covered < MIN_COVERED:
-            return
-        self._records.append(LoadRecord(slot.start, max(slot.total / slot.count, 0.0)))
-        self._dirty = True
-
     @callback
     def _handle_sample(self, now: datetime) -> None:
         """Take one sample of the House's consumption."""
         if self._stopped:
             return
-        now = dt_util.as_utc(now)
-        self._roll(now)
-        slot = self._slot
-        assert slot is not None
-        since = max(self._last_sample or slot.start, slot.start)
-        self._last_sample = now
-        consumption = self._house.consumption()
-        if consumption is None:
-            return
-        slot.total += consumption
-        slot.count += 1
-        slot.covered += min((now - since).total_seconds(), MAX_SAMPLE_COVER)
+        self._recorder.sample(now, {SINGLE: self._house.consumption()})
 
     async def _async_tick(self, _now: datetime | None = None) -> None:
         """A quarter-hour boundary: finish the quarter-hour, save, update."""
         if self._stopped:
             return
         now = dt_util.utcnow()
-        self._roll(now)
-        self._prune(now)
+        self._recorder.roll(now)
+        self._recorder.prune(now)
         self._recompute(now)
-        await self._async_save()
+        await self._recorder.async_save()
         self._notify()

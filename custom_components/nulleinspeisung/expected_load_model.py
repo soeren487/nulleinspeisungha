@@ -14,6 +14,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, tzinfo
 
+from .quarter_recorder import QuarterRecord
+
 HALF_LIFE_DAYS = 7.0
 """Days after which a record counts half as much."""
 LEARNED_DAYS = 7
@@ -24,14 +26,8 @@ SLOTS_PER_DAY = 96
 SLOT_HOURS = 0.25
 
 
-@dataclass(frozen=True, slots=True)
-class LoadRecord:
-    """What one finished quarter-hour showed."""
-
-    start: datetime
-    """Timezone-aware start of the quarter-hour."""
-    watts: float
-    """Mean consumption of the House in W; never negative."""
+LoadRecord = QuarterRecord
+"""What one finished quarter-hour of consumption showed."""
 
 
 def fallback_watts(daily_kwh: float) -> float:

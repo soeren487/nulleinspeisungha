@@ -126,6 +126,10 @@
             "battery_backed": "Inverters whose input is a DC Battery"
           }
         },
+        "dc_batteries": {
+          "title": "DC Batteries",
+          "description": "For each Battery-backed Inverter, choose the sensors that report the energy stored in its DC Batteries, in Wh or kWh. One Inverter can have several. Grid charging then counts on the energy these Inverters will deliver until sunrise. Leave a field empty for an Inverter without such sensors; a sensor that is unavailable counts as empty."
+        },
         "ac_battery": {
           "title": "AC Battery",
           "description": "If the House has an AC Battery, enter the address of its Victron GX. Leave the address empty if it has none. The GX must allow MQTT without a password on the port.",
@@ -334,6 +338,12 @@
       },
       "forecast_surplus": {
         "name": "Forecast surplus"
+      },
+      "dc_battery_energy": {
+        "name": "Energy in DC batteries"
+      },
+      "dc_battery_support": {
+        "name": "Expected DC battery support until sunrise"
       }
     },
     "button": {
