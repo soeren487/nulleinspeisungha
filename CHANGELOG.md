@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.1
+
+### New
+
+- **An icon for the integration.** Home Assistant shows it on the integration's page and wherever it lists the integration: a ring for the zero, with a sun arc and a lightning bolt. It ships with the integration, so nothing needs to be set up.
+
+### Good to know
+
+- Restart Home Assistant after updating. Your browser may show the old placeholder until its cache expires; a hard reload helps.
+- The HACS list takes its icons from Home Assistant's central brands collection, not from the integration, so HACS itself may still show a placeholder.
+
 ## 0.6.0
 
 ### New
