@@ -1,5 +1,7 @@
 # Nulleinspeisung
 
+<img src="custom_components/nulleinspeisung/brand/icon.png" alt="Nulleinspeisung icon" width="96">
+
 A Home Assistant custom integration that regulates photovoltaic inverters so that each house exchanges a chosen amount of power with the grid, keeps stuck DTUs running, and charges AC batteries from the grid when electricity is cheap.
 
 ## Status
