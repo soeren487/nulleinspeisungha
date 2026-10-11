@@ -50,8 +50,13 @@ def _sent(mqtt_mock: MagicMock) -> list[tuple]:
     return [c.args for c in mqtt_mock.async_publish.call_args_list]
 
 
-async def _tick(hass: HomeAssistant, freezer, seconds: float = 15) -> None:
+async def _tick(
+    hass: HomeAssistant, freezer, seconds: float = 15, report: bool = False
+) -> None:
     freezer.tick(delta=timedelta(seconds=seconds))
+    meter = hass.states.get(METER)
+    if report and meter is not None:  # the meter keeps reporting
+        hass.states.async_set(METER, meter.state, meter.attributes)
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
 
@@ -89,8 +94,11 @@ async def test_a_new_house_has_both_switches_on_and_works_unasked(
     await _setup(hass, dtu_network, gx, none)
     assert _switch(hass, CURTAILMENT) == "on"
     assert _switch(hass, PUBLISH) == "on"
-    # 500 W export against a setpoint of 0 W: the limits are lowered by themselves.
-    await _tick(hass, freezer)
+    # 500 W export against a setpoint of 0 W: the limits are lowered by
+    # themselves, once the House has half a minute of readings and has seen
+    # the export in two runs.
+    for _ in range(3):
+        await _tick(hass, freezer, report=True)
     assert dtu_network.limits() != []
     assert (
         f"W/{gx.portal_id}/hub4/0/Overrides/Setpoint",
@@ -98,10 +106,11 @@ async def test_a_new_house_has_both_switches_on_and_works_unasked(
     ) in gx.other_publishes
     _grid(hass, -400)
     await hass.async_block_till_done()
-    assert _sent(mqtt_mock) == [(TOPIC, '{"grid": {"power": -400.0}}', 0, False)]
+    assert _sent(mqtt_mock)[-1] == (TOPIC, '{"grid": {"power": -400.0}}', 0, False)
     dtu_network.clear_limits()
     _grid(hass, -100)
-    await _tick(hass, freezer)
+    for _ in range(5):  # the export has to last
+        await _tick(hass, freezer, report=True)
     assert dtu_network.limits() != []
 
 
@@ -176,7 +185,8 @@ async def test_publishing_stored_off_with_curtailment_stored_on(
     )
     assert _switch(hass, CURTAILMENT) == "on"
     assert _switch(hass, PUBLISH) == "off"
-    await _tick(hass, freezer)
+    for _ in range(3):
+        await _tick(hass, freezer, report=True)
     assert dtu_network.limits() != []
     _grid(hass, -100)
     await hass.async_block_till_done()

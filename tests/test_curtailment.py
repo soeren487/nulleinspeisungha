@@ -370,3 +370,166 @@ def test_without_pending_changes_the_result_is_the_same_as_ever(grid: float) -> 
     explicit = _full(grid, [_pending(0, production=600, limit=70)])
     assert explicit.state is plain.state
     assert explicit.pv.allowed_power == pytest.approx(plain.allowed_power)
+
+
+# -- probing upward ------------------------------------------------------------
+
+
+def _probe(grid: float, pv, bb=(), headroom: float = 0.0, **kwargs):
+    return decide_house(
+        grid, 0.0, 30.0, 5.0, pv, list(bb), None, headroom, probe=True, **kwargs
+    )
+
+
+def test_a_held_back_group_is_probed_although_the_meter_shows_no_import() -> None:
+    """At the target with the PV group at 40 %: one step of 3 % of the rated power."""
+    decision = _probe(0, [_inv(production=400, limit=40)])
+    assert decision.state is ControlState.PROBING
+    assert decision.pv.allowed_power == pytest.approx(430)
+    assert decision.pv.changed
+
+
+def test_the_probe_is_the_largest_of_import_headroom_and_the_probe_step() -> None:
+    """A bigger import or headroom is no bare probe: the state is raising."""
+    imported = _probe(100, [_inv(production=400, limit=40)])
+    assert imported.state is ControlState.RAISING
+    assert imported.pv.allowed_power == pytest.approx(500)
+    with_room = _probe(0, [_inv(production=400, limit=40)], headroom=300)
+    assert with_room.state is ControlState.RAISING
+    assert with_room.pv.allowed_power == pytest.approx(700)
+    # An import inside the band is smaller than the probe: still a bare probe.
+    small = _probe(20, [_inv(production=400, limit=40)])
+    assert small.state is ControlState.PROBING
+    assert small.pv.allowed_power == pytest.approx(430)
+    # A headroom beyond the band but below the probe step raises by the step.
+    tiny = decide_house(
+        0, 0.0, 10.0, 5.0, [_inv(production=400, limit=40)], [], None, 20, probe=True
+    )
+    assert tiny.state is ControlState.RAISING
+    assert tiny.pv.allowed_power == pytest.approx(430)
+
+
+def test_the_probe_is_a_rule_of_the_rated_power_even_inside_a_wide_band() -> None:
+    decision = decide_house(
+        0, 0.0, 100.0, 5.0, [_inv(production=400, limit=40)], [], None, probe=True
+    )
+    assert decision.state is ControlState.PROBING
+    assert decision.pv.allowed_power == pytest.approx(430)
+
+
+@pytest.mark.parametrize(
+    "pv",
+    [
+        [_inv(production=400, limit=100)],  # not held back
+        [_pending(100, production=400, limit=40)],  # a raise is on its way
+    ],
+)
+def test_no_probe_without_a_held_back_group_or_while_a_raise_is_on_its_way(pv) -> None:
+    decision = _probe(0, pv)
+    assert decision.state is ControlState.HOLDING
+    assert not decision.pv.changed
+
+
+def test_a_small_pending_raise_does_not_stop_the_probe() -> None:
+    assert _probe(0, [_pending(30, production=400, limit=40)]).state is (
+        ControlState.PROBING
+    )
+
+
+def test_no_probe_when_exporting_beyond_the_band_and_export_still_lowers() -> None:
+    decision = _probe(-100, [_inv(production=400, limit=40)], headroom=500)
+    assert decision.state is ControlState.LOWERING
+    assert decision.pv.allowed_power == pytest.approx(300)
+
+
+def test_no_probe_unless_allowed() -> None:
+    decision = _full(0, [_inv(production=400, limit=40)])
+    assert decision.state is ControlState.HOLDING
+
+
+def test_the_battery_backed_group_is_never_probed() -> None:
+    decision = _probe(0, [], [_inv(production=400, limit=40)])
+    assert decision.state is ControlState.HOLDING
+    assert not decision.battery_backed.changed
+    # ... and a probe of the PV group leaves it alone.
+    both = _probe(0, [_inv(production=400, limit=40)], [_inv(production=400, limit=40)])
+    assert both.state is ControlState.PROBING
+    assert both.battery_backed.allowed_power == pytest.approx(400)
+
+
+def test_a_probe_where_the_limit_is_not_biting_goes_to_100_at_once() -> None:
+    """The sun gives less than the limit: more limit adds nothing, so open it."""
+    idle = ControllableInverter(
+        rated_power=1000, production=300, limit=60, limited=False
+    )
+    decision = _probe(0, [idle])
+    assert decision.state is ControlState.PROBING
+    assert decision.pv.allowed_power == pytest.approx(1000)
+
+
+def test_a_probe_is_capped_by_the_rated_power() -> None:
+    decision = _probe(0, [_inv(production=980, limit=99)])
+    assert decision.pv.allowed_power == pytest.approx(1000)
+
+
+def test_the_wanted_percent_flag_decides_what_is_held_back() -> None:
+    """The reserve cap can hold the limit below the wanted percent: no probe then."""
+    pv = [_inv(production=400, limit=40)]
+    assert _probe(0, pv, pv_curtailed=False).state is ControlState.HOLDING
+    assert _probe(0, pv, pv_curtailed=True).state is ControlState.PROBING
+
+
+# -- a battery covering a load ---------------------------------------------------
+
+
+def _discharging(grid: float, discharge: float, *pv, **kwargs):
+    return decide_house(
+        grid,
+        0.0,
+        30.0,
+        5.0,
+        list(pv),
+        [],
+        None,
+        0.0,
+        None,
+        battery_discharge=discharge,
+        **kwargs,
+    )
+
+
+def test_a_battery_discharge_raises_like_an_import() -> None:
+    decision = _discharging(0, 300, _inv(production=400, limit=40))
+    assert decision.state is ControlState.RAISING
+    assert decision.pv.allowed_power == pytest.approx(700)
+
+
+def test_a_discharge_within_the_band_is_ignored() -> None:
+    decision = _discharging(0, 25, _inv(production=400, limit=40))
+    assert decision.state is ControlState.HOLDING
+
+
+def test_a_raise_on_its_way_covers_the_discharge() -> None:
+    """300 W discharge, a raise of 300 W still to come: nothing more is commanded."""
+    decision = _discharging(0, 300, _pending(300, production=400, limit=40))
+    assert decision.state is ControlState.HOLDING
+    partly = _discharging(0, 300, _pending(200, production=400, limit=40))
+    assert partly.state is ControlState.RAISING
+    assert partly.pv.allowed_power == pytest.approx(500)
+
+
+def test_a_discharge_is_added_to_the_import_and_never_raises_battery_backed() -> None:
+    decision = decide_house(
+        100,
+        0.0,
+        30.0,
+        5.0,
+        [_inv(production=400, limit=40)],
+        [_inv(production=400, limit=40)],
+        None,
+        0.0,
+        None,
+        battery_discharge=200,
+    )
+    assert decision.pv.allowed_power == pytest.approx(700)
+    assert decision.battery_backed.allowed_power == pytest.approx(400)

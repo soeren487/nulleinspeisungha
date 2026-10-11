@@ -10,6 +10,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+PROBE_FRACTION = 0.03
+"""Share of the PV group's rated power a probing raise adds."""
+
 
 class ControlState(StrEnum):
     """What the control is doing, for display."""
@@ -18,6 +21,7 @@ class ControlState(StrEnum):
     HOLDING = "holding"
     LOWERING = "lowering"
     RAISING = "raising"
+    PROBING = "probing"
     NO_GRID_POWER = "no_grid_power"
     NO_INVERTER = "no_inverter"
     FAILURE = "failure"
@@ -59,7 +63,7 @@ class HouseDecision:
     """The controller's answer for a House with up to two groups."""
 
     state: ControlState
-    """``HOLDING``, ``LOWERING``, ``RAISING`` or ``NO_INVERTER``."""
+    """``HOLDING``, ``LOWERING``, ``RAISING``, ``PROBING`` or ``NO_INVERTER``."""
     pv: GroupDecision | None
     """``None`` if no PV Inverter is controllable."""
     battery_backed: GroupDecision | None
@@ -113,6 +117,8 @@ def decide_house(
     consumption: float | None,
     battery_headroom: float = 0.0,
     pv_curtailed: bool | None = None,
+    probe: bool = False,
+    battery_discharge: float = 0.0,
 ) -> HouseDecision:
     """Decide the allowed production of the PV group and the Battery-backed group.
 
@@ -129,6 +135,20 @@ def decide_house(
     means: when its allowance is below its rated power. ``battery_headroom`` is
     the charge power the AC Battery could still take: it raises the deviation
     unless the House exports beyond the band.
+
+    ``battery_discharge`` is the mean power in W the AC Battery gives to the
+    House while the PV group is held back: it counts like an import (beyond the
+    band, less what a raise on its way will already add) and is added to the
+    raise with the headroom, since a battery covering a load hides it from the
+    meter.
+
+    ``probe`` allows a probing raise: in a run that does not lower, with no
+    export beyond the band, a PV group that is held back (``pv_curtailed``) and
+    no raise of it still on its way (its pending change within the band), the
+    PV allowance is raised by the import, by the headroom or by ``PROBE_FRACTION``
+    of its rated power, whichever is largest, even though the meter shows no
+    import. The state is ``PROBING`` when that bare step was the only reason
+    for the raise. The Battery-backed group is never probed.
 
     Lowering takes from the Battery-backed group first (its lost energy stays
     stored) and from the PV group only what remains. Raising gives to the PV
@@ -172,8 +192,33 @@ def decide_house(
     deviation = grid_deviation
     if deviation >= -tolerance_band:
         deviation += battery_headroom
+        if battery_discharge > 0 and pv is not None:
+            raising = max(pending, 0.0)
+            absorbed = min(max(grid_deviation, 0.0), raising)
+            covered = max(battery_discharge - (raising - absorbed), 0.0)
+            if covered > tolerance_band:
+                deviation += covered
+    held_back = pv is not None and (
+        pv.allowed < pv.rated if pv_curtailed is None else pv_curtailed
+    )
     step = ControlState.HOLDING
-    if abs(deviation) > tolerance_band:
+    probing = False
+    if (
+        probe
+        and PROBE_FRACTION > 0
+        and pv is not None
+        and held_back
+        and pv.allowed < pv.rated
+        and grid_deviation >= -tolerance_band
+        and sum(i.pending_change for i in pv_inverters) <= tolerance_band
+    ):
+        probe_step = PROBE_FRACTION * pv.rated
+        if abs(deviation) <= tolerance_band:
+            probing = True
+            deviation = probe_step
+        else:
+            deviation = max(deviation, probe_step)
+    if probing or abs(deviation) > tolerance_band:
         if deviation < 0:
             step = ControlState.LOWERING
             remaining = -deviation
@@ -186,7 +231,7 @@ def decide_house(
                 touched_pv = True
                 new_pv = min(max(pv.base - remaining, pv.floor), pv.rated)
         else:
-            step = ControlState.RAISING
+            step = ControlState.PROBING if probing else ControlState.RAISING
             remaining = deviation
             if pv:
                 touched_pv = True
@@ -216,9 +261,7 @@ def decide_house(
         <= tolerance_band
     )
     measured = all(i.production is not None for i in battery_backed_inverters)
-    curtailed = pv is not None and (
-        pv.allowed < pv.rated if pv_curtailed is None else pv_curtailed
-    )
+    curtailed = held_back
     if bb and consumption is not None and settled:
         band = tolerance_band
         if bb.production > consumption + band:

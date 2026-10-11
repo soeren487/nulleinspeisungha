@@ -799,7 +799,10 @@ async def test_curtailment_and_grid_charging_do_not_fight(
         production=(300.0, 700.0),
         switches={"curtailment": "on"},
     )
-    await _settle(hass, freezer, gx, seconds=15)
+    # The House averages a minute of the meter and lowers only export that
+    # persists: half a minute of readings, a first run that waits, a second.
+    for _ in range(4):
+        await _settle(hass, freezer, gx, seconds=15)
     lowered = dtu_network.limits()
     assert lowered
     assert {percent for _, _, percent in lowered} != {100}
@@ -811,7 +814,7 @@ async def test_curtailment_and_grid_charging_do_not_fight(
     assert _writes(gx) == [1400.0]
     _grid(hass, 1400)
     gx.charge(power=2100.0)
-    for _ in range(4):
+    for _ in range(8):
         await _settle(hass, freezer, gx, seconds=15)
     raised = dtu_network.limits()
     assert raised
@@ -845,7 +848,7 @@ async def test_after_the_charging_curtailment_takes_over_again(
     await _settle(hass, freezer, gx, to="2026-10-05T02:00")
     _grid(hass, 1400)
     gx.charge(power=2100.0)
-    for _ in range(3):
+    for _ in range(5):  # the mean of the last minute follows the import
         await _settle(hass, freezer, gx, seconds=15)
     assert {p for _, _, p in dtu_network.limits()[-2:]} == {100}
     dtu_network.clear_limits()
@@ -855,7 +858,7 @@ async def test_after_the_charging_curtailment_takes_over_again(
     gx.charge(power=0.0)
     gx.charge(level=100.0)
     await _settle(hass, freezer, gx, to="2026-10-05T02:15")
-    for _ in range(3):
+    for _ in range(5):
         await _settle(hass, freezer, gx, seconds=15)
     assert _override(gx) is None
     assert dtu_network.limits()
