@@ -14,20 +14,32 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from homeassistant.core import CALLBACK_TYPE, callback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.core import CALLBACK_TYPE, Event, callback
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_state_report_event,
+    async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from .alerts import raise_alert, resolve_alert
 from .battery_priority import import_target
 from .battery_watch import ISSUE_SETPOINT_CONFLICT, sync_issue
-from .curtailment import ControllableInverter, ControlState, GroupDecision, decide_house
+from .curtailment import (
+    PROBE_FRACTION,
+    ControllableInverter,
+    ControlState,
+    GroupDecision,
+    decide_house,
+)
 from .dtu_client import DtuAuthError, DtuConnectionError
 from .failure import Assessment, FailureWatch
+from .grid_average import GridPowerWindow
 from .limit_model import (
     DEFAULT_SLEW_RATE,
+    LATENCY,
     LimitState,
     ceiling,
     is_limited,
@@ -48,8 +60,18 @@ DEFAULT_MAXIMUM_CHARGE_POWER = 2100.0
 DEFAULT_LIMIT_SLEW_RATE = DEFAULT_SLEW_RATE
 DEFAULT_RESPONSE_RESERVE = 0.0
 
-HEADROOM_SUPPRESSION = 300.0
-"""Seconds the battery headroom counts as zero after the House exported anyway."""
+BATTERY_WINDOW = 60.0
+"""Seconds of Grid Power the House averages when an AC Battery regulates the meter."""
+MINIMUM_COVERAGE = 0.5
+"""Share of the window the readings must cover before the House acts on a mean."""
+FIRST_BACKOFF = 60.0
+"""Seconds the House waits before probing again after a probe was taken back."""
+MAXIMUM_BACKOFF = 600.0
+"""The longest wait between two probes; each occurrence in a row doubles it."""
+PROBE_WINDOW = 3
+"""Runs after a probe within which a lowering counts as taking it back."""
+HEADROOM_APPEARS = 200.0
+"""W the headroom must exceed the one of the last probe by to end the back-off."""
 
 FULL_LIMIT = 100
 """Percent an Inverter is given when Curtailment is switched off."""
@@ -97,9 +119,28 @@ class HouseControl:
         """Percent of rated power per second an Inverter's effective limit moves."""
         self.response_reserve = DEFAULT_RESPONSE_RESERVE
         """Percent of rated power the limits are kept above the output; 0 is off."""
-        self._headroom_suppressed_until = 0.0
+        self._readings = GridPowerWindow()
+        """The Grid Meter's recent readings, for the mean the House regulates on."""
+        self._unsub_meter: list[CALLBACK_TYPE] = []
+        self._discharges = GridPowerWindow()
+        """AC Battery discharge power (0 when charging), sampled with the meter."""
+        self._import_seen = False
+        """The previous run showed an import beyond the band."""
         self._export_seen = False
-        """The previous run exported beyond the band while headroom was positive."""
+        """The previous run exported beyond the band (AC Battery with fresh state)."""
+        self._settling_until = 0.0
+        """Seconds (Home Assistant clock) up to which a change was on its way."""
+        self._runs = 0
+        """Runs on which the House regulated on Grid Power since Curtailment was
+        switched on (not those that waited for readings)."""
+        self._probe_run: int | None = None
+        """The run whose raise came from the bare probe step, until it is answered."""
+        self._probe_headroom = 0.0
+        """The battery headroom in W at the last probe."""
+        self._backoff = 0.0
+        """Seconds to wait before the next probe; 0 is none."""
+        self._probe_not_before = 0.0
+        """Seconds (Home Assistant clock) before which the House does not probe."""
         self._update_interval = DEFAULT_UPDATE_INTERVAL
         self.state = ControlState.OFF
         self.on_failure = ON_FAILURE_HOLD
@@ -179,15 +220,22 @@ class HouseControl:
         self.maximum_charge_power = watts
         self._notify()
 
-    def headroom_suppressed(self) -> bool:
-        """Whether the battery headroom is ignored after unabsorbed export."""
-        return dt_util.utcnow().timestamp() < self._headroom_suppressed_until
+    @property
+    def probe_backoff(self) -> float:
+        """Seconds the House waits between two probes now; 0 is none."""
+        return self._backoff
+
+    def _reset_backoff(self) -> None:
+        self._backoff = 0.0
+        self._probe_not_before = 0.0
+        self._probe_run = None
 
     # -- life cycle --------------------------------------------------------
 
     def start(self) -> None:
         """Begin once the restored settings are in place."""
         self._started = True
+        self._watch_meter()
         if self.curtailment:
             self.state = ControlState.HOLDING
             self._schedule()
@@ -198,6 +246,9 @@ class HouseControl:
         """Stop the loop without sending anything."""
         self._started = False
         self._cancel()
+        for unsub in self._unsub_meter:
+            unsub()
+        self._unsub_meter = []
 
     async def async_set_curtailment(self, on: bool) -> None:
         """Switch Curtailment on, or off and give the Inverters back 100 %."""
@@ -205,6 +256,7 @@ class HouseControl:
             return
         if on:
             self.curtailment = True
+            self._reset_backoff()
             self.state = ControlState.HOLDING
             self._notify()
             if self._started:
@@ -220,6 +272,41 @@ class HouseControl:
             self.requested_percent_battery_backed = None
             self._clear_failure()
         self._notify()
+
+    def _watch_meter(self) -> None:
+        """Keep the Grid Meter's readings, starting with the one it shows now."""
+        meter = [self._house.config.grid_meter]
+        hass = self._house.hass
+        self._unsub_meter = [
+            async_track_state_change_event(hass, meter, self._on_meter),
+            # A report with an unchanged value is not a state change.
+            async_track_state_report_event(hass, meter, self._on_meter),
+        ]
+        state = hass.states.get(meter[0])
+        if state is not None:
+            self._take_reading(state.last_changed_timestamp)
+
+    @callback
+    def _on_meter(self, _event: Event[Any]) -> None:
+        state = self._house.hass.states.get(self._house.config.grid_meter)
+        if state is not None:
+            self._take_reading(state.last_reported_timestamp)
+        else:
+            self._readings.clear()
+
+    def _take_reading(self, time: float) -> None:
+        power = self._house.grid_power()
+        keep = max(BATTERY_WINDOW, self._update_interval)
+        if power is None:
+            self._readings.clear()
+            self._discharges.clear()
+            return
+        self._readings.add(time, power, keep)
+        battery = self._house.battery
+        if battery is not None and battery.fresh and battery.power is not None:
+            self._discharges.add(time, max(-battery.power, 0.0), keep)
+        else:
+            self._discharges.clear()
 
     def _schedule(self) -> None:
         self._cancel()
@@ -253,6 +340,9 @@ class HouseControl:
         self._in_failure = False
         self._pending.clear()
         self._export_seen = False
+        self._reset_backoff()
+        self._import_seen = False
+        self._settling_until = 0.0
         self._sync_issues(Assessment())
         sync_issue(self._house, ISSUE_SETPOINT_CONFLICT, False)
 
@@ -328,7 +418,7 @@ class HouseControl:
             self.feed_in_setpoint, battery.grid_setpoint if battery else None
         )
         sync_issue(self._house, ISSUE_SETPOINT_CONFLICT, capped)
-        headroom = self._house.battery_headroom_raw()
+        headroom = self._house.battery_headroom()
 
         def inputs(members: list[_Controllable]) -> list[ControllableInverter]:
             result = []
@@ -371,31 +461,110 @@ class HouseControl:
 
         pv_group = [i for i in group if not i.battery_backed]
         bb_group = [i for i in group if i.battery_backed]
+        pv_inputs = inputs(pv_group)
+        bb_inputs = inputs(bb_group)
+        if (
+            sum(min(i.pending_change, 0.0) for i in (*pv_inputs, *bb_inputs))
+            < -self.tolerance_band
+        ):
+            # A lowering is still on its way: readings from before it are of
+            # the old output and say nothing about what it will leave.
+            self._settling_until = now
+        regulated = battery is not None and battery.fresh
+        probing_allowed = now >= self._probe_not_before
+        regulating = True
+        battery_discharge = 0.0
+        if regulated:
+            # An AC Battery regulating the meter makes it noise around the
+            # target: regulate on the mean of the last minute.
+            mean, coverage = self._readings.mean(
+                now, BATTERY_WINDOW, self._settling_until
+            )
+            if mean is None or coverage < MINIMUM_COVERAGE:
+                # Just started, the meter just came back, or a change just took
+                # effect: too little to average. Grid Power counts as on target,
+                # so the House neither lowers, raises nor probes on it; the
+                # rules that work from the consumption go on.
+                grid_power = target
+                headroom = 0.0
+                probing_allowed = False
+                regulating = False
+            else:
+                grid_power = mean
+                overrides = self._house.wanted_overrides
+                held_back = any(
+                    self._wanted.get(i.serial, FULL_LIMIT) < FULL_LIMIT
+                    for i in pv_group
+                )
+                if (
+                    held_back
+                    and overrides.max_discharge_power is None
+                    and overrides.setpoint is None
+                ):
+                    # Not during a Discharge Block or Grid Charging.
+                    discharge, covered = self._discharges.mean(
+                        now, BATTERY_WINDOW, self._settling_until
+                    )
+                    if discharge is not None and covered >= MINIMUM_COVERAGE:
+                        battery_discharge = discharge
+
         decision = decide_house(
             grid_power,
             -target + 0.0,
             self.tolerance_band,
             self.limit_floor,
-            inputs(pv_group),
-            inputs(bb_group),
+            pv_inputs,
+            bb_inputs,
             self._house.consumption(),
-            0.0 if self.headroom_suppressed() else headroom,
+            headroom,
             any(self._wanted.get(i.serial, FULL_LIMIT) < FULL_LIMIT for i in pv_group),
+            probe=probing_allowed,
+            battery_discharge=battery_discharge,
         )
-        # The corrected deviation: an export a lowering on its way will remove
-        # does not arm the guard. Beyond the band the headroom has no effect on
-        # the decision, so it need not be made again.
-        if headroom > 0 and decision.corrected_deviation < -self.tolerance_band:
-            if self.headroom_suppressed() or seen:
-                # The battery was said to take more, yet the House exports
-                # again: it tapers without the BMS saying so.
-                self._headroom_suppressed_until = now + HEADROOM_SUPPRESSION
-            else:
-                # A battery ramps up over seconds: give it one Update Interval.
-                self._export_seen = True
-                self.state = ControlState.HOLDING
-                await self._async_resend(group)
-                return
+        if regulating:
+            self._runs += 1
+        band = self.tolerance_band
+        exporting = decision.corrected_deviation < -band
+        importing = decision.corrected_deviation > band
+        if (
+            (importing and self._import_seen)
+            or battery_discharge
+            > max(band, PROBE_FRACTION * sum(i.rated_power for i in pv_group))
+            or headroom >= self._probe_headroom + HEADROOM_APPEARS
+        ):
+            # Lasting import, a battery covering a load (more than one probe
+            # step: a lowering's rounding makes it discharge a little), or room
+            # in the battery
+            # is a reason to raise that is never held back: probing starts
+            # afresh. A single import reading of a noisy meter is no reason.
+            self._reset_backoff()
+        self._import_seen = importing
+        if exporting and battery is not None and battery.fresh and not seen:
+            # An AC Battery ramps up over seconds and its meter wanders: export
+            # lowers the limits only when it persists for a second run.
+            self._export_seen = True
+            self.state = ControlState.HOLDING
+            await self._async_resend(group)
+            return
+        if exporting and self._probe_run is not None:
+            if self._runs - self._probe_run <= PROBE_WINDOW:
+                # The probe was taken back: wait longer before the next one.
+                self._backoff = min(
+                    self._backoff * 2 if self._backoff else FIRST_BACKOFF,
+                    MAXIMUM_BACKOFF,
+                )
+                self._probe_not_before = now + self._backoff
+            self._probe_run = None
+        if decision.state is ControlState.PROBING:
+            self._probe_run = self._runs
+            self._probe_headroom = headroom
+            if self._backoff:
+                # The surplus has taken probes back before: one at a time, and
+                # only once a minute of the meter shows what this one did.
+                self._settling_until = max(
+                    self._settling_until,
+                    now + LATENCY + PROBE_FRACTION * 100 / self.limit_slew_rate,
+                )
         self.state = decision.state
         if decision.state is ControlState.NO_INVERTER:
             self.requested_percent = None
@@ -462,9 +631,22 @@ class HouseControl:
                 )
             if current == percent:
                 continue
+            before = self._sent.get(inverter.serial, FULL_LIMIT)
             if await self._async_send(inverter.dtu_key, inverter.serial, percent):
                 self._remember(inverter.serial, percent)
+                self._note_lowering(inverter, before - percent)
         return requested
+
+    def _note_lowering(self, inverter: _Controllable, points: float) -> None:
+        """Remember until when a lowering by ``points`` percent is on its way.
+
+        The meter's readings from before then are of the old output, so the mean
+        the House regulates on starts afterwards (see ``_settling_until``).
+        """
+        if points / 100 * inverter.rated_power <= self.tolerance_band:
+            return
+        done = dt_util.utcnow().timestamp() + LATENCY + points / self.limit_slew_rate
+        self._settling_until = max(self._settling_until, done)
 
     def _cap(self, inverter: _Controllable) -> int:
         """The highest whole percent the response reserve allows the Inverter."""

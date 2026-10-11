@@ -36,7 +36,7 @@ from tests.test_curtailment_flow import (
     _set,
 )
 
-pytestmark = pytest.mark.measured_inverters
+pytestmark = [pytest.mark.measured_inverters, pytest.mark.no_probe]
 
 STEP = 5
 INTERVAL = 15
@@ -51,9 +51,20 @@ def _record_decisions(monkeypatch: pytest.MonkeyPatch) -> None:
     """Note what the controller was given and answered in every run."""
     real = house_control.decide_house
 
-    def spy(grid, setpoint, band, floor, pv, bb, consumption, headroom, curtailed):
+    def spy(
+        grid, setpoint, band, floor, pv, bb, consumption, headroom, curtailed, **kwargs
+    ):
         result = real(
-            grid, setpoint, band, floor, pv, bb, consumption, headroom, curtailed
+            grid,
+            setpoint,
+            band,
+            floor,
+            pv,
+            bb,
+            consumption,
+            headroom,
+            curtailed,
+            **kwargs,
         )
         seen.update(
             consumption=consumption,
@@ -313,7 +324,9 @@ async def test_the_battery_backed_group_settles(
     if ac_battery:
         # The AC Battery holds Grid Power, so the group has nothing to correct
         # but the cap and the release: a lowering and a raising.
-        assert plant.commands() <= 3, trace
+        # (Not counting the start: an AC Battery makes the House average the
+        # meter over a minute, so its first run comes later.)
+        assert plant.commands(LOAD_RISES) <= 3, trace
         assert plant.swing(plant.first_lowering(LOAD_FALLS)) <= 60, trace
         assert plant.commands(LOAD_RISES, LOAD_FALLS) == 0, trace
     else:

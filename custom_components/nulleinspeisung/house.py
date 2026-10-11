@@ -239,7 +239,7 @@ class House:
         """The AC Battery's state; ``None`` when the House has none."""
         return self.gateway.state if self.gateway is not None else None
 
-    def battery_headroom_raw(self) -> float:
+    def battery_headroom(self) -> float:
         """Charge power in W the AC Battery could still take, whatever happened."""
         state = self.battery
         if state is None:
@@ -252,12 +252,6 @@ class House:
             self.control.maximum_charge_power,
             state.fresh,
         )
-
-    def battery_headroom(self) -> float:
-        """The headroom Curtailment may count on right now, in W."""
-        if self.control.headroom_suppressed():
-            return 0.0
-        return self.battery_headroom_raw()
 
     def consumption(self) -> float | None:
         """The House's consumption in W, ``None`` when it cannot be told.

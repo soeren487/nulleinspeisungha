@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -173,6 +174,7 @@ async def test_inside_the_band_nothing_is_sent(
     assert _state(hass, "sensor", "control_state") == "holding"
 
 
+@pytest.mark.no_probe
 async def test_unchanged_percent_is_not_sent_again(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
@@ -412,6 +414,7 @@ async def test_unknown_grid_power_sends_nothing(
     assert _state(hass, "sensor", "control_state") == "lowering"
 
 
+@pytest.mark.no_probe
 async def test_failed_send_is_retried_on_the_next_run(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
@@ -472,6 +475,7 @@ async def test_import_after_lowering_does_not_jump_above_the_allowance(
     assert sorted(dtu_network.limits()) == [(OMA, 1, 29), (BUERO4, 1, 29)]
 
 
+@pytest.mark.no_probe
 async def test_inverter_that_returns_is_taken_to_be_at_100(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:

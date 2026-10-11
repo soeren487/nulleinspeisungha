@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -355,6 +356,7 @@ async def test_after_a_restart_the_limits_are_sent_again_when_reachable(
     assert sorted(dtu_network.limits()) == [(OMA, 1, 24), (BUERO4, 1, 24)]
 
 
+@pytest.mark.no_probe
 async def test_after_a_restart_reachable_inverters_are_sent_again_at_once(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
@@ -371,6 +373,7 @@ async def test_after_a_restart_reachable_inverters_are_sent_again_at_once(
     assert _state(hass, "sensor", "control_state") == "holding"
 
 
+@pytest.mark.no_probe
 async def test_a_restart_by_the_integration_sends_the_limits_again(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
@@ -391,6 +394,7 @@ async def test_a_restart_by_the_integration_sends_the_limits_again(
     assert sorted(dtu_network.limits()) == [(OMA, 1, 24), (BUERO4, 1, 24)]
 
 
+@pytest.mark.no_probe
 async def test_without_a_restart_nothing_is_sent_again(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:

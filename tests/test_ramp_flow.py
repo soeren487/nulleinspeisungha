@@ -11,7 +11,15 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.nulleinspeisung.const import DOMAIN
-from tests.conftest import DtuNetwork, RampSimulator, SimDtu, SimHouse, setup_entry
+from tests.conftest import (
+    DtuNetwork,
+    RampSimulator,
+    SimAcBattery,
+    SimDtu,
+    SimGx,
+    SimHouse,
+    setup_entry,
+)
 from tests.test_curtailment_flow import (
     BUERO4,
     OMA,
@@ -22,7 +30,7 @@ from tests.test_curtailment_flow import (
     _state,
 )
 
-pytestmark = pytest.mark.measured_inverters
+pytestmark = [pytest.mark.measured_inverters, pytest.mark.no_probe]
 
 BAND = 30.0
 STEP = 5
@@ -38,30 +46,62 @@ class Plant:
     sim: RampSimulator
     dtu: SimDtu
     load: float
+    battery: SimAcBattery | None = None
+    """The House's AC Battery; it regulates the meter, with its own wander."""
     coordinators: list = field(default_factory=list)
     """Polled after every step: the phase of the coordinators' own timers depends
     on the real clock, which would make the readings' age vary from run to run."""
     trace: list[tuple[float, float, float]] = field(default_factory=list)
     """(time, Grid Power, production) after every step."""
+    sent: list[tuple[float, str, int]] = field(default_factory=list)
+    """(time, Inverter serial, percent) of every limit command, in order."""
+    _logged: int = 0
 
     def production(self) -> float:
         return sum(i.power or 0.0 for i in self.dtu.inverters[:2])
 
-    def feed_grid(self) -> None:
-        _grid(self.hass, round(self.load - self.production(), 1))
+    def net(self) -> float:
+        """Grid Power without the meter's wander: negative is export."""
+        power = self.battery.power if self.battery else 0.0
+        return self.load - self.production() + power
+
+    def feed_grid(self, seconds: float = 0.0) -> None:
+        open_grid = self.load - self.production()
+        if self.battery is None:
+            _grid(self.hass, round(open_grid, 1))
+        else:
+            _grid(self.hass, round(self.battery.meter(open_grid, seconds), 1))
 
     async def run(self, seconds: float) -> None:
         for _ in range(int(seconds / STEP)):
-            self.freezer.tick(delta=timedelta(seconds=STEP))
-            self.sim.advance(STEP)
-            self.feed_grid()
+            if self.battery is None:
+                self.freezer.tick(delta=timedelta(seconds=STEP))
+                self.sim.advance(STEP)
+                self.feed_grid()
+            else:
+                # The meter reports every second, with the battery's noise.
+                self.sim.advance(STEP)
+                for second in range(STEP):
+                    self.battery.step(
+                        1.0, self.load - self.production(), second == STEP - 1
+                    )
+                    self.freezer.tick(delta=timedelta(seconds=1))
+                    self.feed_grid(1.0)
+                    await self.hass.async_block_till_done()
             for coordinator in self.coordinators:
                 await coordinator.async_refresh()
             async_fire_time_changed(self.hass)
             await self.hass.async_block_till_done()
-            self.trace.append(
-                (self.sim.time, self.load - self.production(), self.production())
-            )
+            self.trace.append((self.sim.time, self.net(), self.production()))
+            self._log_limits()
+
+    def _log_limits(self) -> None:
+        limits = self.network.limits()
+        if len(limits) < self._logged:  # the test cleared the log
+            self._logged = 0
+        for serial, _, percent in limits[self._logged :]:
+            self.sent.append((self.sim.time, serial, percent))
+        self._logged = len(limits)
 
     def commands(self, serial: str) -> int:
         return sum(1 for s, _, _ in self.network.limits() if s == serial)
@@ -89,6 +129,8 @@ async def _plant(
     available: tuple[float, float] = (180.0, 450.0),
     reserve: float = 0.0,
     battery_backed: list[str] | None = None,
+    battery: SimAcBattery | None = None,
+    gx: SimGx | None = None,
 ) -> Plant:
     dtu = _dtu()
     for inverter, power in zip(dtu.inverters, available, strict=False):
@@ -97,7 +139,7 @@ async def _plant(
         inverter.data_age = 2
     dtu.inverters[2].reachable = False
     plant_power = sum(available)
-    _grid(hass, round(load - plant_power, 1))
+    _grid(hass, round(load - plant_power + (battery.power if battery else 0.0), 1))
     entry = await setup_entry(
         hass,
         dtu_network,
@@ -107,11 +149,12 @@ async def _plant(
                 "Home",
                 inverters=[OMA, BUERO4],
                 battery_backed=battery_backed or [],
+                gx=gx or (battery.gx if battery else None),
             )
         ],
     )
     sim = RampSimulator(dtu_network)
-    plant = Plant(hass, freezer, dtu_network, sim, dtu, load)
+    plant = Plant(hass, freezer, dtu_network, sim, dtu, load, battery)
     plant.coordinators = list(entry.runtime_data.dtus.values())
     if reserve:
         await _set(hass, "response_reserve", reserve)

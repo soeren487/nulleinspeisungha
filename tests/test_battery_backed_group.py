@@ -418,14 +418,23 @@ async def _switch(hass: HomeAssistant, service: str) -> None:
     await hass.async_block_till_done()
 
 
-async def _tick(hass: HomeAssistant, freezer, gx: SimGx | None = None) -> None:
-    freezer.tick(delta=timedelta(seconds=15))
+async def _tick(
+    hass: HomeAssistant, freezer, gx: SimGx | None = None, seconds: float = 15
+) -> None:
+    freezer.tick(delta=timedelta(seconds=seconds))
     meter = hass.states.get(METER)
     hass.states.async_set(METER, meter.state, meter.attributes)
     if gx is not None:
         gx.set(POWER, float(gx.topics[POWER][9:-1]))
     async_fire_time_changed(hass)
     await hass.async_block_till_done()
+
+
+async def _warm(hass: HomeAssistant, freezer, gx: SimGx | None) -> None:
+    """Let the meter report for 30 s: with an AC Battery the House acts on the
+    mean of the last minute and waits until it has seen half of it."""
+    await _tick(hass, freezer, gx)
+    await _tick(hass, freezer, gx)
 
 
 async def _home(
@@ -517,6 +526,7 @@ async def test_at_night_with_a_battery_the_load_limits_the_inverter(
     gx = SimGx()
     gx.charge(level=100.0, power=200.0)
     await _home(hass, dtu_network, _dtu(None, 500), grid=0, gx=gx)
+    await _warm(hass, freezer, gx)
     await _switch(hass, "turn_on")
     assert _limits(dtu_network) == [(BUERO4, 1, 20)]
     dtu_network.clear_limits()
@@ -547,6 +557,7 @@ async def test_the_inverter_is_released_when_the_load_comes_back(
     gx.charge(level=100.0, power=200.0)
     dtu = _dtu(None, 500)
     await _home(hass, dtu_network, dtu, grid=0, gx=gx)
+    await _warm(hass, freezer, gx)
     await _switch(hass, "turn_on")
     assert _limits(dtu_network) == [(BUERO4, 1, 20)]
     dtu_network.clear_limits()
@@ -563,13 +574,15 @@ async def test_battery_headroom_does_not_raise_the_battery_backed_inverters(
     gx = SimGx()
     gx.charge(level=100.0, power=0.0)
     await _home(hass, dtu_network, _dtu(300, 700), grid=-800, gx=gx)
+    await _warm(hass, freezer, gx)
     await _switch(hass, "turn_on")
+    await _tick(hass, freezer, gx)  # export must persist for a second run
     assert _limits(dtu_network) == [(OMA, 1, 21), (BUERO4, 1, 5)]
     dtu_network.clear_limits()
 
     gx.charge(level=80.0, power=500.0)
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
+    await _tick(hass, freezer, gx, 60)
     assert _state(hass, "sensor", "battery_headroom") == "1500.0"
     assert _limits(dtu_network) == [(OMA, 1, 100)]
 

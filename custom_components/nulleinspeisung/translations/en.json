@@ -240,6 +240,7 @@
           "holding": "Holding",
           "lowering": "Lowering",
           "raising": "Raising",
+          "probing": "Probing",
           "no_grid_power": "No Grid Power",
           "no_inverter": "No Inverter",
           "failure": "Failure"

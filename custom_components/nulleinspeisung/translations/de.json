@@ -240,6 +240,7 @@
           "holding": "Halten",
           "lowering": "Senken",
           "raising": "Anheben",
+          "probing": "Vortasten",
           "no_grid_power": "Keine Netzleistung",
           "no_inverter": "Kein Wechselrichter",
           "failure": "Störung"

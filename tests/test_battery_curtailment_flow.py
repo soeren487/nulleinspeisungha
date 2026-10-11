@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import device_registry as dr
@@ -88,6 +89,13 @@ async def _tick(
     await hass.async_block_till_done()
 
 
+async def _warm(hass: HomeAssistant, freezer, gx: SimGx | None) -> None:
+    """Let the meter report for 30 s: with an AC Battery the House acts on the
+    mean of the last minute and waits until it has seen half of it."""
+    await _tick(hass, freezer, gx, 15)
+    await _tick(hass, freezer, gx, 15)
+
+
 async def _home(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
@@ -115,14 +123,19 @@ async def test_room_is_left_for_a_battery_that_can_take_more(
     gx = SimGx()
     gx.charge(level=100.0, power=0.0)
     await _home(hass, dtu_network, gx, grid=-500)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    assert dtu_network.limits() == []  # export must persist for a second run
+    await _tick(hass, freezer, gx)
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
     dtu_network.clear_limits()
 
     # The battery now has room: 2100 W maximum - 500 W charging - 100 W margin.
+    # The House acts on the mean of the last minute, so the new Grid Power must
+    # have been there for a minute.
     gx.charge(level=80.0, power=500.0)
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
+    await _tick(hass, freezer, gx, 60)
     assert _state(hass, "sensor", "battery_headroom") == "1500.0"
     # Allowance 504 W + 1500 W = 2004 W of 2100 W.
     assert _limits(dtu_network) == [(OMA, 1, 95), (BUERO4, 1, 95)]
@@ -137,12 +150,15 @@ async def test_full_battery_behaves_as_without_a_battery(
     gx = SimGx()
     gx.charge(level=100.0, power=0.0)
     await _home(hass, dtu_network, gx, grid=-500)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)
     dtu_network.clear_limits()
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
-    assert dtu_network.limits() == []
-    assert _state(hass, "sensor", "control_state") == "holding"
+    await _tick(hass, freezer, gx, 60)
+    # No headroom; the House only probes: one step of 3 % of the rated power.
+    assert _limits(dtu_network) == [(OMA, 1, 27), (BUERO4, 1, 27)]
+    assert _state(hass, "sensor", "control_state") == "probing"
     assert _state(hass, "sensor", "battery_headroom") == "0.0"
 
 
@@ -153,17 +169,22 @@ async def test_battery_at_maximum_charge_power_behaves_as_without_one(
     gx = SimGx()
     gx.charge(level=60.0, power=2100.0)
     await _home(hass, dtu_network, gx, grid=-500)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
     dtu_network.clear_limits()
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
-    assert dtu_network.limits() == []
+    await _tick(hass, freezer, gx, 60)
+    assert _state(hass, "sensor", "battery_headroom") == "0.0"
+    assert _limits(dtu_network) == [(OMA, 1, 27), (BUERO4, 1, 27)]  # a probe
     # Lowering the maximum makes the same charge power leave no room either.
+    dtu_network.clear_limits()
     gx.charge(power=500.0)
     await _set(hass, "maximum_charge_power", 600)
     await _tick(hass, freezer, gx)
-    assert dtu_network.limits() == []
+    assert _state(hass, "sensor", "battery_headroom") == "0.0"
+    assert _limits(dtu_network) == [(OMA, 1, 30), (BUERO4, 1, 30)]  # the next probe
 
 
 async def test_bms_limit_narrows_the_headroom(
@@ -176,45 +197,42 @@ async def test_bms_limit_narrows_the_headroom(
     assert _state(hass, "sensor", "battery_headroom") == "400.0"
 
 
-async def test_export_beyond_the_band_lowers_and_suppresses_the_headroom(
+async def test_export_in_two_runs_lowers_and_the_headroom_keeps_counting(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
-    """Two runs in a row exporting despite headroom: lower, and ignore it 5 minutes."""
+    """Two runs in a row exporting despite headroom lower; no suppression follows."""
     gx = SimGx()
     gx.charge(level=80.0, power=500.0)
     await _home(hass, dtu_network, gx, grid=-500)
     assert _state(hass, "sensor", "battery_headroom") == "1500.0"
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
     # The first run gives the battery one Update Interval: nothing is sent.
     assert dtu_network.limits() == []
     assert _state(hass, "sensor", "control_state") == "holding"
-    assert _state(hass, "sensor", "battery_headroom") == "1500.0"
 
     # Still exporting although the battery could take 1500 W: lower as usual.
     await _tick(hass, freezer, gx, 15)
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
-    assert _state(hass, "sensor", "battery_headroom") == "0.0"
+    assert _state(hass, "sensor", "battery_headroom") == "1500.0"
     dtu_network.clear_limits()
 
-    # At the target again, but for 5 minutes the headroom counts as zero.
+    # At the target again: the headroom counts at once, nothing is ignored.
     _grid(hass, 0)
-    await _tick(hass, freezer, gx, 15)
-    await _tick(hass, freezer, gx, 270)
-    assert dtu_network.limits() == []
-    assert _state(hass, "sensor", "battery_headroom") == "0.0"
-
-    await _tick(hass, freezer, gx, 20)
+    await _tick(hass, freezer, gx, 60)
     assert _state(hass, "sensor", "battery_headroom") == "1500.0"
     assert _limits(dtu_network) == [(OMA, 1, 95), (BUERO4, 1, 95)]
 
 
 async def _lowered_then_room(
-    hass: HomeAssistant, dtu_network: DtuNetwork, gx: SimGx
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer, gx: SimGx
 ) -> None:
     """Limits at 24 % because the battery was full; now it has room to charge."""
     gx.charge(level=100.0, power=0.0)
     await _home(hass, dtu_network, gx, grid=-500)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
     dtu_network.clear_limits()
     gx.charge(level=80.0, power=500.0)
@@ -225,26 +243,26 @@ async def test_one_run_of_export_with_headroom_changes_nothing(
 ) -> None:
     """A spike while the battery ramps up: nothing is lowered, nothing suppressed."""
     gx = SimGx()
-    await _lowered_then_room(hass, dtu_network, gx)
+    await _lowered_then_room(hass, dtu_network, freezer, gx)
     await _tick(hass, freezer, gx)  # Grid Power still shows the spike
     assert dtu_network.limits() == []
     assert _state(hass, "sensor", "control_state") == "holding"
     assert _state(hass, "sensor", "battery_headroom") == "1500.0"
     # The battery has absorbed it: the headroom still counts and raises the limits.
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
+    await _tick(hass, freezer, gx, 60)
     assert _limits(dtu_network) == [(OMA, 1, 95), (BUERO4, 1, 95)]
 
 
-async def test_a_spike_then_a_normal_run_then_a_spike_does_not_suppress(
+async def test_a_spike_then_a_normal_run_then_a_spike_lowers_nothing(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
     """The memory of a spike is cleared by any run without export."""
     gx = SimGx()
-    await _lowered_then_room(hass, dtu_network, gx)
+    await _lowered_then_room(hass, dtu_network, freezer, gx)
     await _tick(hass, freezer, gx)
     _grid(hass, 0)
-    await _tick(hass, freezer, gx)
+    await _tick(hass, freezer, gx, 60)
     dtu_network.clear_limits()
     _grid(hass, -500)
     await _tick(hass, freezer, gx)
@@ -261,7 +279,9 @@ async def test_negative_setpoint_is_capped_by_the_battery_and_raises_an_issue(
     gx.charge(level=100.0, power=0.0)
     await _home(hass, dtu_network, gx, grid=-500)
     await _set(hass, "feed_in_setpoint", -100)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)  # the second run in a row lowers
     # Aimed at 0 W: 1000 W - 500 W = 500 W of 2100 W. Aimed at 100 W import
     # it would have been 400 W = 19 %.
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
@@ -276,7 +296,7 @@ async def test_negative_setpoint_is_capped_by_the_battery_and_raises_an_issue(
 
 
 async def test_negative_setpoint_within_the_battery_setpoint_is_kept(
-    hass: HomeAssistant, dtu_network: DtuNetwork
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
     """A battery that itself imports 150 W allows the 100 W import asked for."""
     gx = SimGx()
@@ -284,13 +304,15 @@ async def test_negative_setpoint_within_the_battery_setpoint_is_kept(
     gx.set("settings/0/Settings/CGwacs/AcPowerSetPoint", 150.0)
     await _home(hass, dtu_network, gx, grid=-500)
     await _set(hass, "feed_in_setpoint", -100)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)  # the second run in a row lowers
     assert _limits(dtu_network) == [(OMA, 1, 19), (BUERO4, 1, 19)]
     assert _issue(hass, "feed_in_conflicts_battery_setpoint") is None
 
 
 async def test_positive_setpoint_is_never_changed(
-    hass: HomeAssistant, dtu_network: DtuNetwork
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
     """Whatever the battery's setpoint, an export Feed-in Setpoint is kept."""
     gx = SimGx()
@@ -298,7 +320,9 @@ async def test_positive_setpoint_is_never_changed(
     gx.set("settings/0/Settings/CGwacs/AcPowerSetPoint", -300.0)
     await _home(hass, dtu_network, gx, grid=-500)
     await _set(hass, "feed_in_setpoint", 300)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
+    await _tick(hass, freezer, gx)  # the second run in a row lowers
     # target -300 W; deviation -200 W; 800 W of 2100 W = 38 %
     assert _limits(dtu_network) == [(OMA, 1, 38), (BUERO4, 1, 38)]
     assert _issue(hass, "feed_in_conflicts_battery_setpoint") is None
@@ -322,6 +346,7 @@ async def test_dynamic_ess_raises_an_issue_until_it_is_off(
     assert gx.other_publishes == []
 
 
+@pytest.mark.no_probe
 async def test_silent_battery_raises_an_issue_and_curtailment_goes_on(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
@@ -329,6 +354,7 @@ async def test_silent_battery_raises_an_issue_and_curtailment_goes_on(
     gx = SimGx()
     gx.charge(level=80.0, power=500.0)
     await _home(hass, dtu_network, gx, grid=-500)
+    await _warm(hass, freezer, gx)
     await _curtail(hass)
     await _tick(hass, freezer, gx)  # the second run in a row lowers
     assert _limits(dtu_network) == [(OMA, 1, 24), (BUERO4, 1, 24)]
@@ -532,7 +558,9 @@ async def test_house_without_battery_has_no_battery_entities(
     dtu_network.clear_limits()
     _grid(hass, 0)
     await _tick(hass, freezer, None)
-    assert dtu_network.limits() == []
+    # No headroom without a battery; a House held back by Curtailment probes.
+    assert _limits(dtu_network) == [(OMA, 1, 27), (BUERO4, 1, 27)]
+    assert _state(hass, "sensor", "control_state") == "probing"
     assert not ir.async_get(hass).issues
     (entry,) = hass.config_entries.async_entries(DOMAIN)
     assert entry.state is ConfigEntryState.LOADED

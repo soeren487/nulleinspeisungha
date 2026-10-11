@@ -14,6 +14,7 @@ dev = [
 asyncio_mode = "auto"
 markers = [
     "measured_inverters: simulated Inverters ramp their limit as measured",
+    "no_probe: the House does not probe upward (for tests of other rules)",
 ]
 testpaths = ["tests"]
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import random
 import re
 import time
 from collections import deque
@@ -76,6 +77,16 @@ def instant_inverters(request: pytest.FixtureRequest) -> Iterator[None]:
         ),
         patch("custom_components.nulleinspeisung.limit_model.LATENCY", 0.0),
     ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def probing(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Tests marked ``no_probe`` test other rules: the probe step is zero there."""
+    if not request.node.get_closest_marker("no_probe"):
+        yield
+        return
+    with patch("custom_components.nulleinspeisung.curtailment.PROBE_FRACTION", 0.0):
         yield
 
 
@@ -526,6 +537,117 @@ class RampSimulator:
                 inverter.available, effective / 100 * (inverter.rated_power or 0)
             )
         self.network.apply()
+
+
+class SimAcBattery:
+    """An AC Battery as measured on a real one, publishing through a fake GX.
+
+    It regulates Grid Power towards its setpoint (the stored one, or the
+    Setpoint override) by charging or discharging, moving its power by
+    ``ramp`` W per second, limited by ``max_charge`` and by what the BMS allows
+    (charge current limit times voltage), unable to charge when full, and unable
+    to discharge more than the discharge override allows. It does not hold the
+    meter exactly: ``meter`` adds noise of zero mean and a standard deviation
+    of ``noise`` W, a new value every 1 to 2 s, from a seeded generator, and
+    ``bias`` W (as measured on a real one: about 100 W when calm, far more
+    when big loads switch). Charge level, power,
+    voltage and charge current limit are published to the GX after every step.
+    """
+
+    def __init__(
+        self,
+        gx: SimGx,
+        *,
+        level: float = 50.0,
+        capacity: float = 10_000.0,
+        max_charge: float = 1900.0,
+        max_discharge: float = 2500.0,
+        ramp: float = 400.0,
+        noise: float = 0.0,
+        bias: float = 0.0,
+        seed: int = 1,
+        voltage: float = 52.0,
+        current_limit: float = 100.0,
+    ) -> None:
+        """Start idle at ``level`` percent and publish the state."""
+        self.gx = gx
+        self.level = level
+        self.capacity = capacity
+        """Wh."""
+        self.max_charge = max_charge
+        self.max_discharge = max_discharge
+        self.ramp = ramp
+        self.noise = noise
+        self.bias = bias
+        self._wander = 0.0
+        self._hold = 0.0
+        """Seconds left of the current noise value."""
+        self.voltage = voltage
+        self.current_limit = current_limit
+        """A the BMS allows; the default allows far more than ``max_charge``."""
+        self.power = 0.0
+        """W; positive when charging."""
+        self.random = random.Random(seed)
+        self.publish()
+
+    @property
+    def allowed_current(self) -> float:
+        """The charge current the BMS allows: it tapers off above 95 % charge."""
+        taper = min(max((100.0 - self.level) / 5.0, 0.0), 1.0)
+        return self.current_limit * taper
+
+    def _override(self, path: str) -> float | None:
+        value = json.loads(self.gx.topics[path])["value"]
+        return None if value is None else float(value)
+
+    def wanted(self, open_grid: float) -> float:
+        """The power the battery aims for when the House would import ``open_grid``."""
+        setpoint = self._override("hub4/0/Overrides/Setpoint")
+        if setpoint is None:
+            setpoint = json.loads(
+                self.gx.topics["settings/0/Settings/CGwacs/AcPowerSetPoint"]
+            )["value"]
+        top = min(self.max_charge, self.allowed_current * self.voltage)
+        if self.level >= 100:
+            top = 0.0
+        bottom = self.max_discharge
+        block = self._override("hub4/0/Overrides/MaxDischargePower")
+        if block is not None:
+            bottom = min(bottom, block)
+        return min(max(setpoint - open_grid, -bottom), top)
+
+    def step(self, seconds: float, open_grid: float, publish: bool = True) -> None:
+        """Move for ``seconds``, then publish. ``open_grid`` is the Grid Power
+        the House would show without the battery (load minus production)."""
+        goal = self.wanted(open_grid)
+        move = self.ramp * seconds
+        self.power = (
+            min(self.power + move, goal)
+            if goal >= self.power
+            else max(self.power - move, goal)
+        )
+        self.level = min(
+            max(self.level + self.power * seconds / 3600 / self.capacity * 100, 0), 100
+        )
+        if publish:
+            self.publish()
+
+    def meter(self, open_grid: float, seconds: float = 0.0) -> float:
+        """Grid Power as the Grid Meter shows it, ``seconds`` after the last call."""
+        self._hold -= seconds
+        if self._hold <= 0:
+            self._hold = self.random.uniform(1.0, 2.0)
+            self._wander = self.random.gauss(0.0, self.noise) if self.noise else 0.0
+        return open_grid + self.power + self.bias + self._wander
+
+    def publish(self) -> None:
+        """Give the GX the battery's state."""
+        self.gx.charge(
+            level=round(self.level, 1),  # the BMS reports tenths of a percent
+            power=round(self.power, 1),
+            voltage=self.voltage,
+            current_limit=round(self.allowed_current, 1),
+        )
 
 
 @pytest.fixture

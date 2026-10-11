@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Curtailment no longer throws solar power away while the battery has room.** With an AC battery that regulates the grid meter (Victron ESS), the inverters could stay at 35 % while the battery charged with only 1 kW of the 1.9 kW it can take. Two causes: after export the house ignored the battery's free room for 5 minutes, and that waiting re-armed again and again; and the grid meter of a house with such a battery is noise around zero (readings of -480 to +420 W on a calm day, up to -2500 to +2660 W when big loads switch), so a single reading of a few tens of watts of export lowered the inverters to 5 to 15 % and the next reading raised them again (114 limit changes in one hour).
+- Now the house regulates on the mean of the last minute of the grid meter, lowers only for export beyond the tolerance band that lasts for two runs, and no longer waits 5 minutes after export. Whenever inverters are held back and the house is not exporting, it raises their limit by 3 % of their rated power and watches the meter: the battery and the loads take what they can, and only export that persists lowers the limit again. A load switched on while the inverters are limited therefore makes the limits rise step by step, also when the battery covers the load and no import shows at the meter. When the sun gives more than the house and a full battery can use, the probes become rarer (the house waits 1, 2, 4 ... up to 10 minutes after a probe was taken back).
+- A battery that covers a load you just switched on (washing machine) is noticed from its discharge: the limits then rise within a few minutes. A full battery under a strong sun with a noisy meter ends with rare probes.
+- The control state sensor has a new value, "probing" (German: "Vortasten"), for a run that raised the limit only to find out whether the power can be used.
+
 ## 0.6.1
 
 ### New
