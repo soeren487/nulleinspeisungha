@@ -41,11 +41,11 @@ Shared across both houses:[^initial-requirements]
 
 # State
 
-- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md` with 19 tickets under `.scratch/nulleinspeisung/issues/`; each ticket file carries its status. Tickets 01 to 15, 17 to 19, 21, 22, 24 to 29 and 31 are done as of 2026-10-24; open are 16 (one observed night per house), 23 (on hold) and 30 (fewer commands at saturation): the integration installs, connects DTUs, restarts a stuck DTU, has Houses with a grid meter and assigned inverters, can curtail a House's inverters to the feed-in setpoint, fetches Tibber quarter-hour prices per House, and learns a PV forecast per House from Open-Meteo irradiance and its own production history. Curtailment reads the AC battery over a direct MQTT connection to each GX and gives it priority. Soeren installed the state after ticket 05 on the production Home Assistant and added DTUs and Houses successfully. Since 2026-10-06 the integration publishes the grid power to both Victron systems and the owner's Node-RED flow is off; grid charging by the integration is built but not released yet. Limits have been sent to real inverters in measurement sessions. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
+- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md`; tickets live under `.scratch/nulleinspeisung/issues/`, each with its status. As of 2026-10-24 all planned features are built and released up to 0.7.0 (curtailment with battery priority, stuck-DTU restart, grid power published to both Victron systems, grid charging with efficiency check and discharge block, PV forecast, expected load, DC battery support); ticket 31 (usable energy above the Victron's minimum charge level) is merged but not released. Open: 16 (one observed night per house), 23 (on hold for a firmware update) and 30 (fewer limit commands when the battery is full). The integration runs on the owner's production Home Assistant and his Node-RED flow is off since 2026-10-06. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
 
 # Related
 
 - [Development workflow](development-workflow.md)
 
 [^initial-requirements]: Initial requirements stated by Soeren
-[^repo-state]: Repository state on 2026-10-04
+[^repo-state]: Repository and installation state, last updated 2026-10-24

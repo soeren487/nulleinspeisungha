@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-10-24
+* **Update**: [Overview](project/overview.md): state brought up to date (releases up to 0.7.0, ticket 31 merged).
+
 ## 2026-10-06
 * **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): the setpoint and discharge overrides were tested on a real GX. Both are honoured and neither expires.
 
