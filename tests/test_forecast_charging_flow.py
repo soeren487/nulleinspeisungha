@@ -100,6 +100,7 @@ async def _setup(
     if load_history is not None:
         seed_load_history(hass_storage, "house-home", load_history)
     gx = SimGx()
+    gx.no_minimum()  # these tests count the whole content, as a GX without one
     gx.charge(level=level, power=0.0)
     hass.states.async_set(METER, "100", {"unit_of_measurement": "W"})
     entry = await setup_entry(
@@ -582,3 +583,87 @@ def _number_state(entity_id: str, value: float):
     from homeassistant.core import State
 
     return State(entity_id, str(value))
+
+
+# -- the minimum charge level of the AC Battery ----------------------------------
+
+AFTER_SUNRISE_PRICES = {**NIGHT_PRICES, "08:00": (0.12, "VERY_CHEAP")}
+ACTIVE_MINIMUM = "system/0/Control/ActiveSocLimit"
+CONFIGURED_MINIMUM = "settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"
+
+
+async def _minimum_house(
+    hass, dtu_network, tibber, open_meteo, hass_storage, freezer
+) -> SimGx:
+    *_, gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        open_meteo,
+        hass_storage,
+        freezer,
+        daily_kwh=7.2,
+        level=76.0,
+        prices=AFTER_SUNRISE_PRICES,
+    )
+    return gx
+
+
+async def test_a_raised_minimum_leaves_nothing_usable_and_the_plan_buys(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    open_meteo: SimOpenMeteo,
+    hass_storage: dict[str, Any],
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """76 % with an active minimum of 75 %: about 0 kWh usable, the plan buys."""
+    gx = await _minimum_house(
+        hass, dtu_network, tibber, open_meteo, hass_storage, freezer
+    )
+    gx.set(ACTIVE_MINIMUM, None)
+    gx.set(CONFIGURED_MINIMUM, None)
+    await hass.async_block_till_done()
+    before = (_kwh(hass, "battery_at_sunrise"), _plan(hass))
+
+    gx.set(ACTIVE_MINIMUM, 75.0)
+    await hass.async_block_till_done()
+    after = (_kwh(hass, "battery_at_sunrise"), _plan(hass))
+
+    assert before[0] > 1.0
+    assert before[1][1] == 0.0
+    assert after[0] == pytest.approx(0.0, abs=1e-6)
+    assert after[1][1] > 0.0
+    assert len(after[1][2]) > 0
+    assert _value(hass, "sensor", "ac_battery_minimum_charge_level") == "75.0"
+    sensor = _state(hass, "sensor", "ac_battery_minimum_charge_level")
+    assert sensor.attributes["source"] == "active"
+
+
+async def test_the_configured_minimum_is_used_when_no_active_one_is_known(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    open_meteo: SimOpenMeteo,
+    hass_storage: dict[str, Any],
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """Without an active minimum the configured 20 % is the floor."""
+    gx = await _minimum_house(
+        hass, dtu_network, tibber, open_meteo, hass_storage, freezer
+    )
+    gx.set(CONFIGURED_MINIMUM, 20.0)
+    await hass.async_block_till_done()
+    with_configured = _kwh(hass, "battery_at_sunrise")
+    sensor = _state(hass, "sensor", "ac_battery_minimum_charge_level")
+    assert sensor.state == "20.0"
+    assert sensor.attributes["source"] == "configured"
+    gx.set(CONFIGURED_MINIMUM, None)
+    await hass.async_block_till_done()
+    without_floor = _kwh(hass, "battery_at_sunrise")
+    assert _state(hass, "sensor", "ac_battery_minimum_charge_level").state == "0.0"
+    # 20 % of 10 kWh is 2 kWh less usable, unless the night uses it up anyway
+    assert with_configured == pytest.approx(max(without_floor - 2.0, 0.0), abs=1e-3)
+    assert with_configured < without_floor

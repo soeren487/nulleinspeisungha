@@ -283,6 +283,9 @@
       "battery_soc": {
         "name": "AC Battery charge level"
       },
+      "battery_minimum_soc": {
+        "name": "AC battery minimum charge level"
+      },
       "battery_power": {
         "name": "AC Battery power"
       },

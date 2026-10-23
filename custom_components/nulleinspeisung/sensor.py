@@ -27,6 +27,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from . import NulleinspeisungConfigEntry
+from .battery_gateway import minimum_floor
 from .coordinator import DtuCoordinator
 from .curtailment import ControlState
 from .dtu_models import InverterSnapshot
@@ -162,6 +163,15 @@ BATTERY_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=PERCENTAGE,
         value_fn=lambda house: house.battery.charge_level if house.battery else None,
+    ),
+    HouseSensorDescription(
+        key="battery_minimum_soc",
+        translation_key="battery_minimum_soc",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=PERCENTAGE,
+        value_fn=lambda house: (
+            minimum_floor(house.battery)[0] if house.battery else None
+        ),
     ),
     HouseSensorDescription(
         key="battery_power",
@@ -409,6 +419,15 @@ class BatterySensor(HouseEntity, SensorEntity):
     def native_value(self) -> float | None:
         """The current value."""
         return self.entity_description.value_fn(self.house)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, str] | None:
+        """For the minimum charge level: whether it is the active or configured one."""
+        state = self.house.battery
+        if self.entity_description.key != "battery_minimum_soc" or state is None:
+            return None
+        source = minimum_floor(state)[1]
+        return {"source": source} if source else None
 
     @property
     def available(self) -> bool:

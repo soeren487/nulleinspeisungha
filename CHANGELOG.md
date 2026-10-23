@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A raised minimum charge level of the AC battery is no longer ignored.** The Victron does not discharge its battery below a minimum charge level, and with BatteryLife that minimum rises. On one installation it stood at 75 % while the battery was at 76 %, yet the plan counted the whole content (11.4 kWh) as available for the night and bought nothing. The House now reads the minimum the Victron applies right now (falling back to the configured minimum) and counts only the energy above it for what the battery holds at sunrise. At or below the minimum the plan buys as if the battery were empty.
+- A new sensor, "AC battery minimum charge level" (German: "Minimaler Ladestand der AC-Batterie"), shows the minimum in use; its attribute `source` says whether it is the active or the configured one. A Victron that reports no minimum behaves as before.
+
 ## 0.7.0
 
 ### Fixed

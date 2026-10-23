@@ -14,6 +14,7 @@ from custom_components.nulleinspeisung.battery_gateway import (
     BatteryState,
     GxConnectionError,
     async_probe,
+    minimum_floor,
 )
 from tests.conftest import SimGx, register_gx
 
@@ -49,6 +50,8 @@ async def test_portal_id_is_discovered_and_values_are_read(hass: HomeAssistant) 
         charge_current_limit=100.0,
         grid_setpoint=0.0,
         dynamic_ess_mode=0,
+        active_minimum_soc=20.0,
+        configured_minimum_soc=20.0,
         connected=True,
         fresh=True,
     )
@@ -131,6 +134,8 @@ async def test_only_the_needed_topics_are_subscribed(hass: HomeAssistant) -> Non
             f"N/{p}/battery/+/Info/MaxChargeCurrent",
             f"N/{p}/settings/0/Settings/CGwacs/AcPowerSetPoint",
             f"N/{p}/settings/0/Settings/DynamicEss/Mode",
+            f"N/{p}/system/0/Control/ActiveSocLimit",
+            f"N/{p}/settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit",
             f"N/{p}/hub4/0/Overrides/Setpoint",
             f"N/{p}/hub4/0/Overrides/MaxDischargePower",
             f"N/{p}/heartbeat",
@@ -258,7 +263,7 @@ async def test_reconnect_subscribes_again_and_asks_for_everything(
     gx.restore()
     await hass.async_block_till_done()
     assert gx.keepalives == [b"", b""]
-    assert len(gx.subscribed_filters) == 9  # the serial filter is not needed again
+    assert len(gx.subscribed_filters) == 11  # the serial filter is not needed again
     state = gateway.state
     assert state.connected
     assert state.fresh
@@ -391,3 +396,41 @@ async def test_the_two_overrides_appear_in_the_state(hass: HomeAssistant) -> Non
     assert gateway.state.setpoint_override is None
     assert gateway.state.max_discharge_override is None
     await gateway.async_stop()
+
+
+ACTIVE = "system/0/Control/ActiveSocLimit"
+CONFIGURED = "settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"
+
+
+async def test_both_minimums_are_read_and_follow_changes(hass: HomeAssistant) -> None:
+    """The active and the configured minimum come from the recorded topics."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    assert gateway.state.active_minimum_soc == 20.0
+    assert gateway.state.configured_minimum_soc == 20.0
+    gx.set(ACTIVE, 75.0)
+    assert gateway.state.active_minimum_soc == 75.0
+    assert gateway.state.configured_minimum_soc == 20.0
+    await gateway.async_stop()
+
+
+async def test_null_minimums_are_unknown(hass: HomeAssistant) -> None:
+    """A null minimum is unknown, not 0."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    gx.set(ACTIVE, None)
+    gx.set(CONFIGURED, None)
+    assert gateway.state.active_minimum_soc is None
+    assert gateway.state.configured_minimum_soc is None
+    await gateway.async_stop()
+
+
+def test_the_floor_prefers_the_active_minimum() -> None:
+    """Active first, then configured, then 0."""
+    both = BatteryState(active_minimum_soc=75.0, configured_minimum_soc=20.0)
+    assert minimum_floor(both) == (75.0, "active")
+    assert minimum_floor(BatteryState(configured_minimum_soc=20.0)) == (
+        20.0,
+        "configured",
+    )
+    assert minimum_floor(BatteryState()) == (0.0, None)

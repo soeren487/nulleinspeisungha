@@ -1074,6 +1074,13 @@ class SimGx:
             if value is not None:
                 self.set(path, value)
 
+    def no_minimum(self) -> None:
+        """The GX reports no minimum charge level, neither active nor configured."""
+        self.topics["system/0/Control/ActiveSocLimit"] = '{"value":null}'
+        self.topics["settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"] = (
+            '{"value":null}'
+        )
+
     def _start_heartbeat(self) -> None:
         """Beat every ``HEARTBEAT_SECONDS`` of controlled time, once asked to."""
         if self._beat is None:
