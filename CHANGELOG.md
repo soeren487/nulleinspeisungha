@@ -1,11 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.7.1
 
 ### Fixed
 
 - **A raised minimum charge level of the AC battery is no longer ignored.** The Victron does not discharge its battery below a minimum charge level, and with BatteryLife that minimum rises. On one installation it stood at 75 % while the battery was at 76 %, yet the plan counted the whole content (11.4 kWh) as available for the night and bought nothing. The House now reads the minimum the Victron applies right now (falling back to the configured minimum) and counts only the energy above it for what the battery holds at sunrise. At or below the minimum the plan buys as if the battery were empty.
 - A new sensor, "AC battery minimum charge level" (German: "Minimaler Ladestand der AC-Batterie"), shows the minimum in use; its attribute `source` says whether it is the active or the configured one. A Victron that reports no minimum behaves as before.
+
+### Good to know
+
+- **With BatteryLife on**, the active minimum can be far above your configured one (75 % was seen). The integration then treats the battery as nearly empty for the night and plans to buy in the cheap quarter-hours accordingly. If you switch BatteryLife off, the estimate follows the lower minimum by itself.
+- The new sensor "AC battery minimum charge level" ("Minimaler Ladestand der AC-Batterie") on each House device shows the minimum in use and whether it is the active or the configured one.
+- Restart Home Assistant after updating.
 
 ## 0.7.0
 
