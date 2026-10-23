@@ -302,3 +302,39 @@ def test_a_missing_load_is_still_unknown_with_support() -> None:
         battery_at_sunrise(NOW, DEADLINE, 10.0, 100.0, {}, set(), 1.0, {NOW: 100.0})
         is None
     )
+
+
+def test_floor_zero_is_the_result_without_floor() -> None:
+    """A floor of 0 changes nothing."""
+    load = series(NOW, 12, 400.0)
+    assert battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 50.0, load, set(), 0.64, None, 0.0
+    ) == battery_at_sunrise(NOW, DEADLINE, 10.0, 50.0, load, set(), 0.64)
+
+
+def test_only_the_energy_above_the_floor_counts() -> None:
+    """76 % with a floor of 75 % is 1 % of the capacity before the drain."""
+    load = series(NOW, 12, 0.0)
+    content = battery_at_sunrise(
+        NOW, DEADLINE, 10.0, 76.0, load, set(), 1.0, None, 75.0
+    )
+    assert content == pytest.approx(0.1)
+
+
+def test_below_the_floor_the_content_is_zero_and_never_negative() -> None:
+    """At or below the floor nothing can be delivered."""
+    load = series(NOW, 12, 0.0)
+    for level in (75.0, 60.0, 0.0):
+        content = battery_at_sunrise(
+            NOW, DEADLINE, 10.0, level, load, set(), 1.0, None, 75.0
+        )
+        assert content == 0.0
+
+
+def test_the_drain_stops_at_zero_above_the_floor() -> None:
+    """The night uses the usable part up and does not go below 0."""
+    load = series(NOW, 12, 5000.0)
+    assert (
+        battery_at_sunrise(NOW, DEADLINE, 10.0, 76.0, load, set(), 1.0, None, 75.0)
+        == 0.0
+    )

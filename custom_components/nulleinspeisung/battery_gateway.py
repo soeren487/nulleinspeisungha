@@ -53,6 +53,8 @@ _PATH_FIELDS = {
     "system/0/Dc/Battery/Voltage": "voltage",
     "settings/0/Settings/CGwacs/AcPowerSetPoint": "grid_setpoint",
     "settings/0/Settings/DynamicEss/Mode": "dynamic_ess_mode",
+    "system/0/Control/ActiveSocLimit": "active_minimum_soc",
+    "settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit": "configured_minimum_soc",
     "hub4/0/Overrides/Setpoint": "setpoint_override",
     "hub4/0/Overrides/MaxDischargePower": "max_discharge_override",
 }
@@ -193,10 +195,27 @@ class BatteryState:
     """The grid setpoint override in W; ``None`` when not set."""
     max_discharge_override: float | None = None
     """The maximum discharge power override in W; ``None`` when not set."""
+    active_minimum_soc: float | None = None
+    """The minimum charge level in percent that ESS applies right now."""
+    configured_minimum_soc: float | None = None
+    """The minimum charge level in percent that is configured."""
     connected: bool = False
     """Whether the GX's broker is connected."""
     fresh: bool = False
     """Connected and a message of the GX arrived within the last 60 s."""
+
+
+def minimum_floor(state: BatteryState) -> tuple[float, str | None]:
+    """The floor in percent the House counts from, and where it comes from.
+
+    The active minimum when known, else the configured one (``"configured"``),
+    else 0 with no source.
+    """
+    if state.active_minimum_soc is not None:
+        return state.active_minimum_soc, "active"
+    if state.configured_minimum_soc is not None:
+        return state.configured_minimum_soc, "configured"
+    return 0.0, None
 
 
 def parse_value(payload: bytes) -> float | None:

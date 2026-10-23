@@ -22,6 +22,7 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from . import solar, sunrise_energy
+from .battery_gateway import minimum_floor
 from .charging_planner import (
     ChargingPlan,
     PlanReason,
@@ -116,6 +117,7 @@ class GridCharging:
         self.deadline: datetime | None = None
         """The sunrise the plan was made for."""
         self._planned_level: float | None = None
+        self._planned_floor: float | None = None
         self._planned_power: float | None = None
         self._planned_dc: dict[str, float] = {}
         self._last_wanted: int | None = None
@@ -270,6 +272,7 @@ class GridCharging:
             and (
                 self._planned_level is None
                 or abs(level - self._planned_level) >= REPLAN_LEVEL_STEP
+                or self.battery_floor() != self._planned_floor
                 or (
                     plan is not None
                     and plan.reason is not PlanReason.TARGET_REACHED
@@ -316,6 +319,7 @@ class GridCharging:
             return
         control = house.control
         self._planned_level = level
+        self._planned_floor = self.battery_floor()
         self._planned_power = control.maximum_charge_power
         forecast = house.forecast
         bound = (
@@ -337,6 +341,11 @@ class GridCharging:
             ignore_efficiency=self.ignore_efficiency,
             max_energy=bound,
         )
+
+    def battery_floor(self) -> float:
+        """The minimum charge level in percent the AC Battery is counted above."""
+        battery = self._house.battery
+        return minimum_floor(battery)[0] if battery is not None else 0.0
 
     def _compute_forecast(
         self,
@@ -386,7 +395,15 @@ class GridCharging:
                 if discharge_block_active(max(slot, now), prices.prices, qualifying)
             }
         self.battery_at_sunrise = sunrise_energy.battery_at_sunrise(
-            now, deadline, capacity, level, load, blocks, efficiency, support
+            now,
+            deadline,
+            capacity,
+            level,
+            load,
+            blocks,
+            efficiency,
+            support,
+            self.battery_floor(),
         )
         if self.energy_needed is None or self.battery_at_sunrise is None:
             return None

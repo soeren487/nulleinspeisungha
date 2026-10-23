@@ -94,6 +94,7 @@ def battery_at_sunrise(
     blocks: Collection[datetime],
     efficiency: float,
     support: Mapping[datetime, float] | None = None,
+    floor: float = 0.0,
 ) -> float | None:
     """The content expected at ``deadline`` without any charging, in kWh.
 
@@ -106,8 +107,11 @@ def battery_at_sunrise(
     ``support`` is the DC Battery Support in W per quarter-hour: the AC Battery
     then delivers the load minus the support, not below 0, in a quarter-hour
     that is not a Discharge Block.
+
+    ``floor`` is the minimum charge level in percent: only the energy above it
+    counts, never below 0.
     """
-    content = capacity_kwh * charge_level / 100.0
+    content = capacity_kwh * max(charge_level - floor, 0.0) / 100.0
     root = math.sqrt(efficiency)
     for slot, hours in slots(now, deadline):
         if slot in blocks:

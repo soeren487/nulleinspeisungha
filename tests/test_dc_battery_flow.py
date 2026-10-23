@@ -266,6 +266,7 @@ async def _setup(
                 entity_id, value[0], {"unit_of_measurement": value[1]}
             )
     gx = SimGx()
+    gx.no_minimum()  # these tests count the whole content, as a GX without one
     gx.charge(level=level, power=0.0)
     hass.states.async_set(METER, "100", {"unit_of_measurement": "W"})
     entry = await setup_entry(

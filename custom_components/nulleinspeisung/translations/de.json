@@ -283,6 +283,9 @@
       "battery_soc": {
         "name": "Ladestand der AC-Batterie"
       },
+      "battery_minimum_soc": {
+        "name": "Minimaler Ladestand der AC-Batterie"
+      },
       "battery_power": {
         "name": "Leistung der AC-Batterie"
       },
