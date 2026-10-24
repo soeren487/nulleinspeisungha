@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0
 
 ### Changed
 
@@ -9,6 +9,13 @@
 - **The sunrise is no longer a deadline.** Charging can be planned at any known cheap quarter-hour, also after sunrise, whenever an expensive period lies behind it.
 - **Renamed and new sensors** on the Grid charging device: "Energy needed at sunrise" ("Energiebedarf bei Sonnenaufgang") is gone, replaced by "Shortfall in expensive periods" ("Engpass in teuren Zeiten"), the energy the battery cannot carry in quarter-hours that do not qualify, before any planned charging. New is "Uncovered shortfall" ("Nicht gedeckter Engpass"), what is left of it after the planned charging (cheap quarter-hours are missing, are not worth it, or the battery cannot take more). "Reference price" now shows the mean price of the shortfall, weighted by energy; it is unknown while there is no shortfall. "Battery at sunrise" now includes the planned charging. "Grid charging state" has a new value "No shortfall" ("Kein Engpass"). Automations, dashboards and history that used the old sensor need to use "Shortfall in expensive periods" instead; the old entity is removed.
 - **Without a usable PV forecast the plan is pessimistic about PV.** Until two weeks of production history exist, or with "Use forecast" off, no PV is counted at all, so more of the day counts as a shortfall and the House may buy more than before. With a usable forecast the counted share of the forecast (70 % by default) reduces the shortfall.
+
+### Good to know
+
+- **The plan reaches only as far as the known prices.** Before tomorrow's prices are published (around 13:00) an expensive period tomorrow is not yet planned for.
+- **The sensor "Energy needed at sunrise" is gone**; its successor is "Shortfall in expensive periods". Dashboards that show the old sensor need to be updated.
+- **With BatteryLife holding a high minimum charge level**, most evenings show a shortfall, so expect charging in cheap quarter-hours on most days.
+- Restart Home Assistant after updating.
 
 ## 0.7.1
 
