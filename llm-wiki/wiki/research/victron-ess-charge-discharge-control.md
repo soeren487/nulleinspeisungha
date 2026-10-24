@@ -7,6 +7,9 @@ status: draft
 generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T09:36:08Z }
 stale_after: 2027-04-04T00:00:00Z
 sources:
+  - id: ess-batterylife
+    resource: https://www.victronenergy.com/media/pg/Energy_Storage_System/en/controlling-depth-of-discharge.html
+    title: Victron ESS manual, controlling depth of discharge (BatteryLife), and the configuration page
   - id: own-test
     resource: test on the owner's installation, 2026-10-06
     title: Override test on a MultiPlus-II GX with Venus OS v3.67
@@ -150,6 +153,27 @@ What this settles and what it leaves open:
 - **Consequence for safety:** an override that does not expire needs another dead-man. If the controller is also the only publisher of the grid meter value, its death stops that feed, the grid meter driver exits after 60 s, and ESS loses its meter.
 
 
+
+# BatteryLife: how the active minimum moves
+
+From Victron's ESS manual, read on 2026-10-24.[^ess-batterylife]
+
+| Rule | Manual's wording |
+| --- | --- |
+| Raised | "BatteryLife increases the dynamic lower charge limit by 5% for each day that a good state of charge was not reached. The value is increased once a day when the battery reaches the lower limit for the first time." |
+| Raise cancelled | "When the battery reaches 85% SoC on the day, the increment for that day is canceled and the limit remains the same." |
+| Lowered | "If the battery reaches 95% on any day, the dynamic discharge limit is lowered by 5%." |
+| Upper bound | The active SoC limit "will never be more than 80%". |
+| Lower bound | The configured minimum SoC; the limit "will eventually return to the user-preset limit". |
+| Below the limit | Below it for more than 24 hours, the battery "will be slow-charged (from an AC source) until the lower limit has been reached again"; it is recharged when it "drops more than 5% below the minimum configured SoC". |
+| Discharge again | From "discharge disabled" back to self-consumption when the charge level "rises 5% above the set limit". |
+| Modes | "Optimized (with BatteryLife)" uses it; "Optimized (without BatteryLife)" does not; the active limit "Applies only when BatteryLife is enabled". |
+
+Not stated: the time of the daily check, the slow-charge and recharge power, and any way to reset the limit.
+
+Consequence for this integration: Grid Charging buys only what covers expensive shortfalls, so a battery may go days without reaching 95 %. With BatteryLife on, each such day raises the active minimum by 5 % up to 80 %, which leaves less energy to discharge, and the integration then counts less usable energy (ticket 31). The minimum only comes down on days the battery reaches 95 %, for example on a sunny day.
+
+
 [^venus-dbus]: Venus OS wiki - D-Bus services and paths
 [^ess-mode23]: Victron - ESS mode 2 and 3
 [^modbus-attributes]: dbus_modbustcp attributes.csv (register to D-Bus path mapping, master, fetched 2026-10-04)
@@ -162,3 +186,4 @@ What this settles and what it leaves open:
 [^forum-block-2026]: Victron community - Option to block discharge but keep offgrid fallback (forum, users, 2026-02; concerns a Multi RS Solar)
 [^interview]: Requirements decisions
 [^own-test]: Override test on a MultiPlus-II GX with Venus OS v3.67
+[^ess-batterylife]: Victron ESS manual, controlling depth of discharge (BatteryLife), and the configuration page
