@@ -161,6 +161,7 @@ async def _setup(
         "curtailment": "off",
         "publish_grid_power": "on",
         "grid_charging": "on",
+        "batterylife_top_up": "off",  # the tests of the top-up turn it on
         **(switches or {}),
     }
     entry = await setup_entry(
@@ -1241,9 +1242,11 @@ async def test_the_charging_device_sits_below_the_house(
             "energy_missing",
             "reference_price",
             "use_forecast",
+            "batterylife_top_up",
             "forecast_share",
             "expensive_shortfall",
             "uncovered_shortfall",
+            "top_up_energy",
             "battery_at_sunrise",
             "forecast_surplus",
             "forecast_in_use",
@@ -1263,9 +1266,11 @@ async def test_the_charging_device_sits_below_the_house(
         "sensor.home_energy_missing",
         "sensor.home_reference_price",
         "switch.home_use_forecast",
+        "switch.home_batterylife_top_up",
         "number.home_forecast_share",
         "sensor.home_expensive_shortfall",
         "sensor.home_uncovered_shortfall",
+        "sensor.home_top_up_energy",
         "sensor.home_battery_at_sunrise",
         "sensor.home_forecast_surplus",
         "binary_sensor.home_forecast_in_use",

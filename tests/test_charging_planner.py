@@ -21,6 +21,7 @@ from custom_components.nulleinspeisung.charging_planner import (
     ChargingPlan,
     PlanReason,
     Quarter,
+    TopUp,
     discharge_block_active,
     plan_charging,
     slot_length,
@@ -799,3 +800,168 @@ def test_a_block_does_not_depend_on_the_price_or_the_order() -> None:
     points = prices(NIGHT, [(0.9, PriceLevel.VERY_CHEAP), (0.01, PriceLevel.EXPENSIVE)])
     assert discharge_block_active(NIGHT, list(reversed(points)), qualifying)
     assert not discharge_block_active(NIGHT + QUARTER, points, qualifying)
+
+
+# -- the BatteryLife Top-up --------------------------------------------------
+
+TOP_UP = TopUp(level=95.0, end=at("24:00"))
+"""Until midnight of the test day, as the House asks for it."""
+TOP_UP_GRID = (2.0 - 0.1) / E
+"""Level 76 % with the minimum at 75 % holds 0.1 kWh; 95 % holds 2.0 kWh."""
+
+
+def top_up_plan(quarters: list[Quarter], top_up: TopUp | None = TOP_UP, **kw):
+    """10:00, 76 % with the Victron's minimum at 75 %, and a top-up unless told."""
+    settings = {"charge_level": 76.0, "floor": 75.0} | kw
+    return plan_charging(
+        at("10:00"), quarters, battery(**settings), sunrise=None, top_up=top_up
+    )
+
+
+def top_up_day(cheap: float = 0.10, after: float = 0.01, load: float = 0.0, **kw):
+    """Dear, non-qualifying until 14:00; ``cheap`` from 14:00 to 16:00; dear again;
+    the evening 17:00 to 21:00 at ``load``; and a very cheap night after midnight."""
+    return day(
+        ("10:00", "14:00", 0.30, False, 0.0, kw.get("pv", 0.0)),
+        ("14:00", "16:00", cheap, True, 0.0),
+        ("16:00", "17:00", 0.30, False, 0.0),
+        ("17:00", "21:00", 0.256, False, load),
+        ("21:00", "24:00", 0.30, False, 0.0),
+        ("24:00", "26:00", after, True, 0.0),
+    )
+
+
+def test_the_top_up_buys_in_the_cheapest_quarters_before_midnight_up_to_95() -> None:
+    plan = top_up_plan(top_up_day())
+
+    assert plan.reason is PlanReason.CHARGING_PLANNED
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID)
+    assert plan.energy_to_buy == pytest.approx(TOP_UP_GRID)
+    # On equal prices the later quarter-hour: 15:45 backwards.
+    assert starts(plan) == ["14:45", "15:00", "15:15", "15:30", "15:45"]
+    assert all(s.price == 0.10 for s in plan.slots)
+    assert plan.shortfall == 0.0
+    assert plan.uncovered == 0.0
+
+
+def test_quarters_after_the_end_of_the_window_are_not_used_for_the_top_up() -> None:
+    plan = top_up_plan(top_up_day(after=0.001))
+
+    assert plan.slots
+    assert all(s.start < at("24:00") for s in plan.slots)
+
+
+def test_the_top_up_may_end_at_a_cheaper_price_than_a_shortfall_would_pay() -> None:
+    """No efficiency test: 0.50 qualifies for the top-up though the shortfall
+    price is 0.256 and 0.50 / 0.78 is far above it."""
+    quarters = top_up_day(cheap=0.50, load=300.0)
+
+    without = top_up_plan(quarters, top_up=None)
+    with_top_up = top_up_plan(quarters)
+
+    assert without.slots == ()
+    assert without.reason is PlanReason.BLOCKED_BY_EFFICIENCY
+    assert with_top_up.top_up_kwh == pytest.approx(TOP_UP_GRID)
+    assert all(s.price == 0.50 for s in with_top_up.slots)
+
+
+def test_nothing_is_bought_when_95_is_already_reached() -> None:
+    plan = top_up_plan(top_up_day(), charge_level=95.0)
+
+    assert plan.slots == ()
+    assert plan.top_up_kwh == 0.0
+    assert plan.reason is PlanReason.NO_SHORTFALL
+
+
+def test_nothing_is_bought_when_the_counted_pv_forecast_reaches_95() -> None:
+    plan = top_up_plan(top_up_day(pv=4000.0))
+
+    assert plan.slots == ()
+    assert plan.top_up_kwh == 0.0
+
+
+def test_a_little_pv_lowers_what_the_top_up_buys() -> None:
+    """100 W for four hours are 0.4 kWh at the meter, stored as 0.35 kWh."""
+    plan = top_up_plan(top_up_day(pv=100.0))
+
+    assert 0.0 < plan.top_up_kwh < TOP_UP_GRID
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID - 0.4)
+
+
+def test_nothing_is_bought_when_no_qualifying_quarter_is_left_before_midnight() -> None:
+    quarters = day(
+        ("10:00", "24:00", 0.30, False, 0.0),
+        ("24:00", "26:00", 0.01, True, 0.0),
+    )
+
+    plan = top_up_plan(quarters)
+
+    assert plan.slots == ()
+    assert plan.top_up_kwh == 0.0
+
+
+def test_a_charge_target_below_95_rules_the_top_up_out() -> None:
+    plan = top_up_plan(top_up_day(), charge_target=90.0)
+
+    assert plan.slots == ()
+    assert plan.top_up_kwh == 0.0
+
+
+def test_a_charge_target_of_exactly_95_allows_the_top_up() -> None:
+    plan = top_up_plan(top_up_day(), charge_target=95.0)
+
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID)
+
+
+def test_the_maximum_charge_power_limits_every_quarter_of_the_top_up() -> None:
+    quarters = day(
+        ("10:00", "20:00", 0.10, True, 0.0),
+        ("20:00", "24:00", 0.30, False, 0.0),
+    )
+
+    plan = top_up_plan(quarters, max_charge_power=1000.0)
+
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID)
+    assert all(s.grid_kwh <= 0.25 + 1e-9 for s in plan.slots)
+    assert len(plan.slots) == math.ceil(TOP_UP_GRID / 0.25)
+
+
+def test_the_top_up_buys_what_it_can_when_the_window_is_too_short() -> None:
+    quarters = day(
+        ("10:00", "14:00", 0.30, False, 0.0),
+        ("14:00", "14:30", 0.10, True, 0.0),
+        ("14:30", "24:00", 0.30, False, 0.0),
+    )
+
+    plan = top_up_plan(quarters)
+
+    assert plan.top_up_kwh == pytest.approx(2 * GRID_PER_QUARTER)
+    assert plan.reason is PlanReason.CHARGING_PLANNED
+
+
+def test_the_shortfall_planning_sees_the_energy_the_top_up_stores() -> None:
+    """The evening needs 1.2 kWh; 2.0 kWh in the battery carry it, so the top-up
+    covers the shortfall and nothing is bought on top."""
+    plan = top_up_plan(top_up_day(load=300.0))
+
+    assert plan.shortfall > 1.0  # measured without any charging
+    assert plan.reference_price == pytest.approx(0.256)
+    assert plan.uncovered == 0.0
+    assert plan.energy_to_buy == pytest.approx(plan.top_up_kwh)
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID)
+
+
+def test_a_shortfall_the_top_up_leaves_is_still_covered_on_top() -> None:
+    """The evening needs 2.0 kWh; the 2.0 kWh stored deliver only 1.77."""
+    plan = top_up_plan(top_up_day(cheap=0.05, load=500.0), ignore_efficiency=True)
+
+    assert plan.top_up_kwh == pytest.approx(TOP_UP_GRID)
+    assert plan.energy_to_buy > plan.top_up_kwh + 0.1
+    assert plan.uncovered == pytest.approx(0.0, abs=1e-6)
+
+
+def test_without_a_top_up_the_plan_is_what_it_was() -> None:
+    plan = top_up_plan(top_up_day(load=300.0), top_up=None)
+
+    assert plan.top_up_kwh == 0.0
+    assert plan.energy_to_buy == pytest.approx((1.2 - 0.1 * E) / 0.78)

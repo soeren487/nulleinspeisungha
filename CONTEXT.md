@@ -98,6 +98,10 @@ _Avoid_: Losses, round-trip factor
 The price the energy bought by Grid Charging is expected to replace: the mean price of the shortfall, the energy the House would otherwise buy at prices it cannot choose.
 _Avoid_: Comparison price, later price
 
+**BatteryLife Top-up**:
+Grid Charging up to 95 % once a day in qualifying quarter-hours, so that the AC Battery's Victron lowers the minimum charge level its BatteryLife has raised.
+_Avoid_: Full charge, equalisation, maintenance charge
+
 **Discharge Block**:
 A period during which an AC Battery must not discharge, because the Price Level is low and the stored energy is worth more later.
 _Avoid_: Hold, discharge lock

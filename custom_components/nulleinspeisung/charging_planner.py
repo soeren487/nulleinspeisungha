@@ -35,11 +35,13 @@ MAX_HORIZON = timedelta(hours=48)
 """How far ahead the planner looks at most."""
 _EPSILON = 1e-6
 _PROGRESS = 1e-6
+"""kWh a step must remove from the shortfalls to count as progress."""
 _FIT = 1e-9
 """kWh of rounding allowed when a content is compared with the Charge Target."""
 _MIN_EFFICIENCY = 0.01
 """A Battery Efficiency below this is taken as this (no division by zero)."""
-"""kWh a step must remove from the shortfalls to count as progress."""
+TOP_UP_LEVEL = 95.0
+"""Percent the battery must reach on a day for BatteryLife to lower its minimum."""
 
 
 class PriceSlot(Protocol):
@@ -110,6 +112,16 @@ class BatteryModel:
 
 
 @dataclass(frozen=True, slots=True)
+class TopUp:
+    """The BatteryLife Top-up: charge up to ``level`` before ``end``."""
+
+    level: float
+    """Percent to reach."""
+    end: datetime
+    """Timezone-aware end of the window (the end of the current local day)."""
+
+
+@dataclass(frozen=True, slots=True)
 class PlannedSlot:
     """One quarter-hour to charge in."""
 
@@ -130,6 +142,8 @@ class ChargingPlan:
     """The planned quarter-hours, sorted by start."""
     energy_to_buy: float
     """kWh to draw from the grid in all planned quarter-hours."""
+    top_up_kwh: float
+    """kWh of it planned for the BatteryLife Top-up; 0 without one."""
     shortfall: float
     """kWh the House would have to take from the grid at prices that do not
     qualify, without any charging."""
@@ -278,6 +292,7 @@ def plan_charging(
     battery: BatteryModel,
     sunrise: datetime | None = None,
     running: datetime | None = None,
+    top_up: TopUp | None = None,
 ) -> ChargingPlan:
     """Plan the charging that spares the House from buying at dear prices.
 
@@ -307,6 +322,12 @@ def plan_charging(
     (its start; the one ``now`` is in and charging goes on in) is tried first, so
     that a replan inside it does not push the charging out. Repeat. A shortfall for
     which no step helps is given up on and stays uncovered.
+
+    A ``top_up`` is planned first, before the shortfalls, so that they see the
+    energy it stores. It charges in the cheapest qualifying quarter-hours that
+    start before its end, without the efficiency test, within the Maximum Charge
+    Power and the Charge Target, until the content reaches the top-up level at some
+    point of the window. It is skipped when the Charge Target lies below that level.
     """
     now = _utc(now)
     horizon = now + MAX_HORIZON
@@ -322,6 +343,7 @@ def plan_charging(
         return ChargingPlan(
             slots=(),
             energy_to_buy=0.0,
+            top_up_kwh=0.0,
             shortfall=0.0,
             uncovered=0.0,
             reference_price=None,
@@ -341,9 +363,17 @@ def plan_charging(
         else None
     )
 
-    final = first
-    if total_before > _EPSILON:
-        final = _cover(model, planned, first)
+    top_up_kwh = 0.0
+    if top_up is not None:
+        floor = min(max(battery.floor, 0.0), 100.0)
+        wanted = max(battery.capacity_kwh * (top_up.level - floor) / 100.0, 0.0)
+        if wanted <= model.target + _FIT:
+            _plan_top_up(model, planned, wanted, _utc(top_up.end))
+            top_up_kwh = sum(planned)
+
+    final = model.run(planned) if top_up_kwh > 0.0 else first
+    if sum(final.shortfall) > _EPSILON:
+        final = _cover(model, planned, final)
 
     slots = tuple(
         PlannedSlot(
@@ -362,6 +392,7 @@ def plan_charging(
     return ChargingPlan(
         slots=slots,
         energy_to_buy=sum(planned),
+        top_up_kwh=top_up_kwh,
         shortfall=total_before,
         uncovered=uncovered,
         reference_price=reference,
@@ -390,11 +421,11 @@ def _reason(
     first: _Run,
     slots: tuple[PlannedSlot, ...],
 ) -> PlanReason:
+    if slots:
+        return PlanReason.CHARGING_PLANNED
     shortfalls = [i for i, s in enumerate(first.shortfall) if s > 0.0]
     if not shortfalls:
         return PlanReason.NO_SHORTFALL
-    if slots:
-        return PlanReason.CHARGING_PLANNED
     last = shortfalls[-1]
     qualifying = [j for j in range(last) if series[j].qualifies]
     if not qualifying:
@@ -408,6 +439,54 @@ def _reason(
     ):
         return PlanReason.BLOCKED_BY_EFFICIENCY
     return PlanReason.AT_TARGET
+
+
+def _peak(run: _Run, window: int) -> float:
+    """The highest content in the first ``window`` quarters: at the start and after
+    each of them."""
+    after = run.before[window] if window < len(run.before) else run.end
+    return max([*run.before[:window], after])
+
+
+def _plan_top_up(
+    model: _Model, planned: list[float], content: float, end: datetime
+) -> None:
+    """Plan charging (in ``planned``, in place) until the content reaches
+    ``content`` at some point before ``end``, or no step helps."""
+    series = model.quarters
+    window = sum(1 for q in series if _utc(q.start) < end)
+    run = model.run(planned)
+    # Every step that helps raises the peak by at least _PROGRESS and fills a
+    # quarter, hits the target or reaches the level; the bound is a second guard.
+    for _ in range(8 * len(series) + 16):
+        peak = _peak(run, window)
+        if peak >= content - _FIT:
+            return
+        # Same order as for a shortfall, but every price is worth it: what is
+        # bought is usable capacity, not energy for a later price.
+        candidates = sorted(
+            (
+                j
+                for j in range(window)
+                if series[j].qualifies and planned[j] < model.max_grid(j) - _EPSILON
+            ),
+            key=lambda j: (j != model.running, series[j].price, -j),
+        )
+        for j in candidates:
+            room = model.max_grid(j) - planned[j]
+            amount = _feasible(
+                model, planned, j, min(room, (content - peak) / model.root)
+            )
+            if amount <= _EPSILON:
+                continue
+            planned[j] += amount
+            trial = model.run(planned)
+            if _peak(trial, window) > peak + _PROGRESS:
+                run = trial
+                break
+            planned[j] -= amount
+        else:
+            return
 
 
 def _cover(model: _Model, planned: list[float], first: _Run) -> _Run:
