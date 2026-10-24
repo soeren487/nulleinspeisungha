@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-10-25
+* **Update**: [Requirements decisions](project/requirements-decisions.md) and [Overview](project/overview.md): safety buffer (ticket 34).
+
 ## 2026-10-24
 * **Update**: [Requirements decisions](project/requirements-decisions.md) and [Overview](project/overview.md): BatteryLife top-up (ticket 33).
 * **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): how BatteryLife raises and lowers its active minimum, from the ESS manual.

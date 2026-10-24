@@ -48,6 +48,8 @@ DEFAULT_BATTERY_EFFICIENCY = 78.0
 """Percent, as a round trip."""
 DEFAULT_FORECAST_SHARE = 70.0
 """Percent of the PV Forecast that is counted."""
+DEFAULT_SAFETY_BUFFER = 50.0
+"""Percent of the Maximum Charge Power held back in the pessimistic run."""
 TOP_UP_MARGIN = 0.5
 """Percentage points the active minimum must lie above the configured one for
 BatteryLife to count as having raised it."""
@@ -115,6 +117,7 @@ class GridCharging:
         self.use_forecast = True
         """Whether the PV Forecast may limit the energy to buy, once it is usable."""
         self.forecast_share = DEFAULT_FORECAST_SHARE
+        self.safety_buffer = DEFAULT_SAFETY_BUFFER
         self.top_up = True
         """Whether the BatteryLife Top-up may be planned."""
         self.top_up_wanted = False
@@ -202,6 +205,11 @@ class GridCharging:
     def set_forecast_share(self, percent: float) -> None:
         """Change the counted share of the PV Forecast in percent."""
         self.forecast_share = percent
+        self._settings_changed()
+
+    def set_safety_buffer(self, percent: float) -> None:
+        """Change the Safety Buffer in percent of the Maximum Charge Power."""
+        self.safety_buffer = percent
         self._settings_changed()
 
     def _settings_changed(self) -> None:
@@ -410,6 +418,7 @@ class GridCharging:
             sunrise=self.deadline,
             running=self._running_slot(now),
             top_up=top_up,
+            buffer=self.safety_buffer / 100.0,
         )
         self.battery_at_sunrise = self.plan.battery_at_sunrise
 
@@ -544,6 +553,16 @@ class GridCharging:
     def discharge_block(self) -> bool:
         """Whether the wanted discharge override is 0 W: a Discharge Block is on."""
         return self._house.wanted_overrides.max_discharge_power == 0.0
+
+    @property
+    def buffer_forcing(self) -> bool:
+        """Whether the Safety Buffer is what makes the House charge now."""
+        plan = self.plan
+        return (
+            plan is not None
+            and plan.buffer_kwh > 0.0
+            and self._state_at(dt_util.utcnow()) is GridChargingState.CHARGING
+        )
 
     def _block_wanted(self, now: datetime) -> bool:
         """Whether a Discharge Block is wanted: the rule, and we own a fresh battery."""

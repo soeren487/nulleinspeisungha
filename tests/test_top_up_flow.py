@@ -16,13 +16,17 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
+from pytest_homeassistant_custom_component.common import (
+    mock_restore_cache_with_extra_data,
+)
 
 from tests.conftest import DtuNetwork, SimGx, SimTibber
 from tests.test_grid_charging_flow import (
     ROOT,
     _call,
     _items,
+    _override,
     _settle,
     _setup,
     _state,
@@ -198,3 +202,116 @@ async def test_after_the_battery_reached_95_today_there_is_no_top_up_until_tomor
     assert _energy(hass) == pytest.approx(TOP_UP_GRID)
     slots = _state(hass, "sensor", "next_charging_start").attributes["slots"]
     assert all("2026-10-25T12:00" <= slot < "2026-10-25T14:00" for slot in slots)
+
+
+# -- the Safety Buffer -------------------------------------------------------
+
+
+async def _at_14(hass, dtu_network, tibber, freezer, **kw):
+    """14:00: eight cheap quarter-hours are left, 2.1 kWh at half power, less than
+    the top-up's 2.26 kWh; at full power four and a bit would do."""
+    return await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-24T14:00",
+        level=76.0,
+        gx=_gx(),
+        daily_kwh=2.4,
+        price_setup=_one_day,
+        switches=ON,
+        **kw,
+    )
+
+
+async def test_the_safety_buffer_defaults_to_50_percent(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    entry, _sim = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+
+    assert float(_value(hass, "number", "safety_buffer")) == 50.0
+    assert (
+        next(iter(entry.runtime_data.houses.values())).grid_charging.safety_buffer
+        == 50.0
+    )
+    assert _value(hass, "binary_sensor", "safety_buffer_active") == "off"
+
+
+async def test_the_stored_safety_buffer_is_restored(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("number.home_safety_buffer", "20"),
+                {
+                    "native_max_value": 90,
+                    "native_min_value": 0,
+                    "native_step": 5,
+                    "native_unit_of_measurement": "%",
+                    "native_value": 20,
+                },
+            ),
+        ],
+    )
+    entry, _sim = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+
+    assert float(_value(hass, "number", "safety_buffer")) == 20.0
+    house = next(iter(entry.runtime_data.houses.values()))
+    assert house.grid_charging.safety_buffer == 20.0
+
+
+async def test_when_half_power_without_sun_only_just_suffices_it_charges_now(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    _entry, gx = await _at_14(hass, dtu_network, tibber, freezer)
+
+    assert _value(hass, "binary_sensor", "safety_buffer_active") == "on"
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _override(gx) is not None
+    assert _override(gx) > 2000.0
+
+
+async def test_with_a_buffer_of_zero_the_full_power_suffices_later(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """The same 14:00 as above: at full power four and a bit quarter-hours do, so
+    the normal plan waits and the buffer forces nothing."""
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("number.home_safety_buffer", "0"),
+                {
+                    "native_max_value": 90,
+                    "native_min_value": 0,
+                    "native_step": 5,
+                    "native_unit_of_measurement": "%",
+                    "native_value": 0,
+                },
+            ),
+        ],
+    )
+    _entry, gx = await _at_14(hass, dtu_network, tibber, freezer)
+
+    assert _value(hass, "binary_sensor", "safety_buffer_active") == "off"
+    assert _value(hass, "sensor", "grid_charging_state") == "waiting"
+    assert _override(gx) is None

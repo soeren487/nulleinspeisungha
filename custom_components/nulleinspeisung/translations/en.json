@@ -197,6 +197,9 @@
       },
       "forecast_in_use": {
         "name": "PV forecast in use"
+      },
+      "safety_buffer_active": {
+        "name": "Safety buffer active"
       }
     },
     "sensor": {
@@ -418,6 +421,9 @@
       },
       "forecast_share": {
         "name": "Counted share of PV forecast"
+      },
+      "safety_buffer": {
+        "name": "Safety buffer"
       }
     },
     "select": {

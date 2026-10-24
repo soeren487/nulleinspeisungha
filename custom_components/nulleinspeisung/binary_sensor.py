@@ -78,6 +78,7 @@ async def async_setup_entry(
                     ChargingBlockedByEfficiencySensor(house),
                     DischargeBlockSensor(house),
                     ForecastInUseSensor(house),
+                    SafetyBufferActiveSensor(house),
                 ]
                 if house.grid_charging
                 else []
@@ -234,3 +235,18 @@ class ForecastInUseSensor(ChargingEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Whether the forecast bound the energy to buy."""
         return self.charging.forecast_in_use
+
+
+class SafetyBufferActiveSensor(ChargingEntity, BinarySensorEntity):
+    """Whether the Safety Buffer is what makes the House charge now."""
+
+    _attr_translation_key = "safety_buffer_active"
+
+    def __init__(self, house: House) -> None:
+        """Create the binary sensor."""
+        super().__init__(house, "safety_buffer_active", "binary_sensor")
+
+    @property
+    def is_on(self) -> bool:
+        """Whether a pessimistic run without PV needs the current quarter-hour."""
+        return self.charging.buffer_forcing
