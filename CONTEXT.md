@@ -83,7 +83,7 @@ The tariff provider's rating of a quarter-hour's price relative to surrounding p
 _Avoid_: Price rating, tariff level
 
 **Charge Target**:
-The charge level a House's AC Battery should have reached by sunrise through Grid Charging.
+The highest charge level Grid Charging charges a House's AC Battery up to.
 _Avoid_: Target SoC, goal
 
 **Charging Plan**:
@@ -95,7 +95,7 @@ The share of the energy charged into an AC Battery from the grid that comes back
 _Avoid_: Losses, round-trip factor
 
 **Reference Price**:
-The price the energy bought by Grid Charging is expected to replace: what the House would otherwise pay when it later uses that energy.
+The price the energy bought by Grid Charging is expected to replace: the mean price of the shortfall, the energy the House would otherwise buy at prices it cannot choose.
 _Avoid_: Comparison price, later price
 
 **Discharge Block**:

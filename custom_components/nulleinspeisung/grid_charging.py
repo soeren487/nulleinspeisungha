@@ -8,6 +8,7 @@ the grid while a planned quarter-hour is on.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -24,10 +25,15 @@ from homeassistant.util import dt as dt_util
 from . import solar, sunrise_energy
 from .battery_gateway import minimum_floor
 from .charging_planner import (
+    MAX_HORIZON,
+    SLOT,
+    BatteryModel,
     ChargingPlan,
     PlanReason,
+    Quarter,
     discharge_block_active,
     plan_charging,
+    slot_length,
 )
 from .dc_battery import dc_battery_support, sensor_kwh
 from .price_source import PriceLevel
@@ -72,6 +78,7 @@ class GridChargingState(StrEnum):
     BATTERY_UNAVAILABLE = "battery_unavailable"
     DYNAMIC_ESS_ACTIVE = "dynamic_ess_active"
     NO_PRICES = "no_prices"
+    NO_SHORTFALL = "no_shortfall"
     TARGET_REACHED = "target_reached"
     NO_QUALIFYING_SLOT = "no_qualifying_slot"
     BLOCKED_BY_EFFICIENCY = "blocked_by_efficiency"
@@ -81,7 +88,8 @@ class GridChargingState(StrEnum):
 
 _STATE_OF_REASON = {
     PlanReason.NO_PRICES: GridChargingState.NO_PRICES,
-    PlanReason.TARGET_REACHED: GridChargingState.TARGET_REACHED,
+    PlanReason.NO_SHORTFALL: GridChargingState.NO_SHORTFALL,
+    PlanReason.AT_TARGET: GridChargingState.TARGET_REACHED,
     PlanReason.NO_QUALIFYING_SLOT: GridChargingState.NO_QUALIFYING_SLOT,
     PlanReason.BLOCKED_BY_EFFICIENCY: GridChargingState.BLOCKED_BY_EFFICIENCY,
 }
@@ -104,10 +112,9 @@ class GridCharging:
         self.forecast_share = DEFAULT_FORECAST_SHARE
         self.forecast_in_use = False
         """Whether the current plan was computed with the forecast bound."""
-        self.energy_needed: float | None = None
-        """kWh the battery must hold at sunrise; ``None`` when it cannot be told."""
         self.battery_at_sunrise: float | None = None
-        """kWh expected in the battery at sunrise without any charging."""
+        """kWh above the minimum charge level expected in the battery at sunrise,
+        with the planned charging."""
         self.forecast_surplus: float | None = None
         """kWh of counted forecast above the Expected Load in the 24 h after sunrise."""
         self.dc_support: float | None = None
@@ -115,7 +122,7 @@ class GridCharging:
         self.plan: ChargingPlan | None = None
         """The current Charging Plan; ``None`` until one could be made."""
         self.deadline: datetime | None = None
-        """The sunrise the plan was made for."""
+        """The next sunrise, for the content shown at sunrise and the DC support."""
         self._planned_level: float | None = None
         self._planned_floor: float | None = None
         self._planned_power: float | None = None
@@ -275,7 +282,7 @@ class GridCharging:
                 or self.battery_floor() != self._planned_floor
                 or (
                     plan is not None
-                    and plan.reason is not PlanReason.TARGET_REACHED
+                    and plan.reason is not PlanReason.AT_TARGET
                     and level >= self.charge_target
                 )
             )
@@ -311,8 +318,10 @@ class GridCharging:
             house.config.latitude, house.config.longitude, now
         )
         support = self._compute_dc_support(now, self.deadline)
-        to_store = self._compute_forecast(now, self.deadline, capacity, level, support)
+        load = dict(house.expected_load.upcoming())
+        pv = self._compute_forecast(load)
         self.forecast_in_use = False
+        self.battery_at_sunrise = None
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
@@ -322,25 +331,80 @@ class GridCharging:
         self._planned_floor = self.battery_floor()
         self._planned_power = control.maximum_charge_power
         forecast = house.forecast
-        bound = (
-            to_store
-            if self.use_forecast and forecast is not None and forecast.usable
-            else None
-        )
-        self.forecast_in_use = bound is not None
+        use_pv = self.use_forecast and forecast is not None and forecast.usable
+        self.forecast_in_use = use_pv and bool(pv)
+        share = self.forecast_share / 100.0
         self.plan = plan_charging(
-            now=now,
-            prices=prices.prices,
-            qualifying=PRICE_LEVEL_OPTIONS[self.price_levels],
-            charge_level=level,
-            capacity_kwh=capacity,
-            charge_target=self.charge_target,
-            max_charge_power=control.maximum_charge_power,
-            deadline=self.deadline,
-            efficiency=self.battery_efficiency / 100.0,
-            ignore_efficiency=self.ignore_efficiency,
-            max_energy=bound,
+            now,
+            self._quarters(
+                now,
+                load,
+                {start: share * watts for start, watts in pv.items()}
+                if self.forecast_in_use
+                else {},
+                support or {},
+            ),
+            BatteryModel(
+                capacity_kwh=capacity,
+                charge_level=level,
+                floor=self._planned_floor,
+                charge_target=self.charge_target,
+                max_charge_power=control.maximum_charge_power,
+                efficiency=self.battery_efficiency / 100.0,
+                ignore_efficiency=self.ignore_efficiency,
+                discharge_blocks=self.enabled,
+            ),
+            sunrise=self.deadline,
+            running=self._running_slot(now),
         )
+        self.battery_at_sunrise = self.plan.battery_at_sunrise
+
+    def _running_slot(self, now: datetime) -> datetime | None:
+        """The start of the planned quarter-hour that ``now`` is in, if any."""
+        plan = self.plan
+        if plan is None:
+            return None
+        return next((s.start for s in plan.slots if s.start <= now < s.end), None)
+
+    def _quarters(
+        self,
+        now: datetime,
+        load: Mapping[datetime, float],
+        pv: Mapping[datetime, float],
+        support: Mapping[datetime, float],
+    ) -> list[Quarter]:
+        """The quarter-hours from the current one to where the prices or the
+        Expected Load end, at most 48 hours; each with what the planner needs."""
+        prices = self._house.prices
+        assert prices is not None
+        points = sorted(prices.prices, key=lambda p: p.start)
+        if not points:
+            return []
+        length = slot_length(points)
+        starts = [p.start for p in points]
+        qualifying = PRICE_LEVEL_OPTIONS[self.price_levels]
+        first = sunrise_energy.quarter_start(now)
+        quarters: list[Quarter] = []
+        for i in range(int(MAX_HORIZON / SLOT)):
+            start = first + i * SLOT
+            index = bisect_right(starts, start) - 1
+            if index < 0 or start >= points[index].start + length:
+                break  # the known prices end here
+            watts = load.get(start)
+            if watts is None:
+                break  # and so does the Expected Load
+            point = points[index]
+            quarters.append(
+                Quarter(
+                    start=start,
+                    price=point.total,
+                    qualifies=point.level in qualifying,
+                    load_w=watts,
+                    pv_w=pv.get(start, 0.0),
+                    support_w=support.get(start, 0.0),
+                )
+            )
+        return quarters
 
     def battery_floor(self) -> float:
         """The minimum charge level in percent the AC Battery is counted above."""
@@ -348,68 +412,23 @@ class GridCharging:
         return minimum_floor(battery)[0] if battery is not None else 0.0
 
     def _compute_forecast(
-        self,
-        now: datetime,
-        deadline: datetime,
-        capacity: float | None,
-        level: float | None,
-        support: Mapping[datetime, float] | None = None,
-    ) -> float | None:
-        """Work out the figures of the PV Forecast; return the energy to store.
+        self, load: Mapping[datetime, float]
+    ) -> dict[datetime, float]:
+        """The raw PV Forecast in W per quarter-hour; the forecast surplus is worked
+        out from it whenever its inputs exist, whether or not the forecast is used.
 
-        They are computed whenever their inputs exist, whether or not the
-        forecast is to be used. Production of Battery-backed Inverters by day is
-        not counted, so the result errs on the side of buying a little more; their
-        ``support`` at night lowers what the AC Battery delivers until sunrise.
+        Production of Battery-backed Inverters by day is not counted either way.
         """
-        house = self._house
-        self.energy_needed = self.battery_at_sunrise = self.forecast_surplus = None
-        forecast = house.forecast
-        if forecast is None:
-            return None
-        slots = forecast.slots
-        if not slots:
-            return None
-        pv = {slot.start: slot.watts for slot in slots}
-        load = dict(house.expected_load.upcoming())
-        share = self.forecast_share / 100.0
-        efficiency = self.battery_efficiency / 100.0
-        prices = house.prices
-        qualifying = PRICE_LEVEL_OPTIONS[self.price_levels]
-        end = sunrise_energy.period_end(
-            deadline, prices.prices if prices is not None else (), qualifying
-        )
-        self.energy_needed = sunrise_energy.energy_needed_at_sunrise(
-            deadline, load, pv, share, end, efficiency
-        )
-        self.forecast_surplus = sunrise_energy.forecast_surplus(
-            deadline, load, pv, share
-        )
-        if capacity is None or level is None:
-            return None
-        blocks: set[datetime] = set()
-        if prices is not None and self._block_applies():
-            blocks = {
-                slot
-                for slot, _ in sunrise_energy.slots(now, deadline)
-                if discharge_block_active(max(slot, now), prices.prices, qualifying)
-            }
-        self.battery_at_sunrise = sunrise_energy.battery_at_sunrise(
-            now,
-            deadline,
-            capacity,
-            level,
-            load,
-            blocks,
-            efficiency,
-            support,
-            self.battery_floor(),
-        )
-        if self.energy_needed is None or self.battery_at_sunrise is None:
-            return None
-        return sunrise_energy.energy_to_store(
-            self.energy_needed, self.battery_at_sunrise
-        )
+        self.forecast_surplus = None
+        forecast = self._house.forecast
+        if forecast is None or not forecast.slots:
+            return {}
+        pv = {slot.start: slot.watts for slot in forecast.slots}
+        if self.deadline is not None:
+            self.forecast_surplus = sunrise_energy.forecast_surplus(
+                self.deadline, load, pv, self.forecast_share / 100.0
+            )
+        return pv
 
     def _compute_dc_support(
         self, now: datetime, deadline: datetime

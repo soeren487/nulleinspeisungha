@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Grid charging now prepares for expensive periods before they come, not only for the night.** On the morning of 24 October the battery stood at 76 % with the Victron's minimum at 75 %, the prices were very cheap all night and cheap again right after sunrise, and the evening was expensive (0.256 EUR/kWh). The old rule asked only how much the battery must hold at sunrise to reach the next cheap period, found 0.06 kWh and bought nothing. After sunrise the evening then emptied the battery to its minimum and was bought at the expensive price.
+- **The new rule.** The House walks through every coming quarter-hour up to the end of the known prices (at most 48 hours) and follows what the battery holds: in a quarter-hour that does not qualify for charging the battery carries the expected load minus the counted PV and the DC battery support, down to its minimum; PV surplus charges it; during a Discharge Block it is held. What the battery cannot carry in a quarter-hour that does not qualify is a **shortfall** at that quarter-hour's price. Each shortfall, earliest first, is bought beforehand in the cheapest qualifying quarter-hours before it whose price, after the battery efficiency, is at most the shortfall's price (on equal prices the later quarter-hour, so the energy is stored for less time), within the maximum charge power and the Charge Target. In the case above it now charges in the cheap quarter-hours after sunrise as much as the evening needs and nothing at night. A night that is cheap throughout is still not used when the battery is not needed before the next cheap period.
+- **The sunrise is no longer a deadline.** Charging can be planned at any known cheap quarter-hour, also after sunrise, whenever an expensive period lies behind it.
+- **Renamed and new sensors** on the Grid charging device: "Energy needed at sunrise" ("Energiebedarf bei Sonnenaufgang") is gone, replaced by "Shortfall in expensive periods" ("Engpass in teuren Zeiten"), the energy the battery cannot carry in quarter-hours that do not qualify, before any planned charging. New is "Uncovered shortfall" ("Nicht gedeckter Engpass"), what is left of it after the planned charging (cheap quarter-hours are missing, are not worth it, or the battery cannot take more). "Reference price" now shows the mean price of the shortfall, weighted by energy; it is unknown while there is no shortfall. "Battery at sunrise" now includes the planned charging. "Grid charging state" has a new value "No shortfall" ("Kein Engpass"). Automations, dashboards and history that used the old sensor need to use "Shortfall in expensive periods" instead; the old entity is removed.
+- **Without a usable PV forecast the plan is pessimistic about PV.** Until two weeks of production history exist, or with "Use forecast" off, no PV is counted at all, so more of the day counts as a shortfall and the House may buy more than before. With a usable forecast the counted share of the forecast (70 % by default) reduces the shortfall.
+
 ## 0.7.1
 
 ### Fixed

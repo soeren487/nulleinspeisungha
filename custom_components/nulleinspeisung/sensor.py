@@ -22,12 +22,14 @@ from homeassistant.const import (
     UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.util import dt as dt_util
 
 from . import NulleinspeisungConfigEntry
 from .battery_gateway import minimum_floor
+from .const import DOMAIN
 from .coordinator import DtuCoordinator
 from .curtailment import ControlState
 from .dtu_models import InverterSnapshot
@@ -189,6 +191,23 @@ BATTERY_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
 )
 
 
+def _remove_retired_entities(
+    hass: HomeAssistant, entry: NulleinspeisungConfigEntry
+) -> None:
+    """Remove the sensors that no longer exist from the entity registry.
+
+    ``energy_needed_at_sunrise`` was replaced by ``expensive_shortfall`` when
+    Grid Charging began to plan against shortfalls.
+    """
+    registry = er.async_get(hass)
+    for house in entry.runtime_data.houses.values():
+        entity_id = registry.async_get_entity_id(
+            "sensor", DOMAIN, f"{house.config.unique_id}_energy_needed_at_sunrise"
+        )
+        if entity_id is not None:
+            registry.async_remove(entity_id)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: NulleinspeisungConfigEntry,
@@ -208,6 +227,7 @@ async def async_setup_entry(
         async_add_entities,
         lambda c: [DtuRestartCountSensor(c), DtuLastRestartSensor(c)],
     )
+    _remove_retired_entities(hass, entry)
     setup_house_entities(
         hass,
         entry,
@@ -242,8 +262,9 @@ async def async_setup_entry(
                     NextChargingStartSensor(house),
                     ChargingEnergySensor(house, "energy_to_buy"),
                     ChargingEnergySensor(house, "energy_missing"),
+                    ChargingEnergySensor(house, "expensive_shortfall"),
+                    ChargingEnergySensor(house, "uncovered_shortfall"),
                     ReferencePriceSensor(house),
-                    SunriseEnergySensor(house, "energy_needed_at_sunrise"),
                     SunriseEnergySensor(house, "battery_at_sunrise"),
                     SunriseEnergySensor(house, "forecast_surplus"),
                     *(
@@ -778,7 +799,9 @@ class ChargingEnergySensor(ChargingEntity, SensorEntity):
     _attr_suggested_display_precision = 2
 
     def __init__(self, house: House, key: str) -> None:
-        """Create the sensor ``energy_to_buy`` or ``energy_missing``."""
+        """Create the sensor ``energy_to_buy``, ``energy_missing``,
+        ``expensive_shortfall`` or ``uncovered_shortfall``.
+        """
         super().__init__(house, key, "sensor")
         self._attr_translation_key = key
         self._key = key
@@ -789,13 +812,16 @@ class ChargingEnergySensor(ChargingEntity, SensorEntity):
         plan = self.charging.plan
         if plan is None:
             return None
-        return (
-            plan.energy_to_buy if self._key == "energy_to_buy" else plan.energy_missing
-        )
+        return {
+            "energy_to_buy": plan.energy_to_buy,
+            "energy_missing": plan.energy_missing,
+            "expensive_shortfall": plan.shortfall,
+            "uncovered_shortfall": plan.uncovered,
+        }[self._key]
 
 
 class ReferencePriceSensor(ChargingEntity, SensorEntity):
-    """The price the energy bought by Grid Charging is expected to replace."""
+    """The mean price of the shortfall the energy bought by Grid Charging replaces."""
 
     _attr_translation_key = "reference_price"
     _attr_suggested_display_precision = 4
@@ -819,16 +845,14 @@ class ReferencePriceSensor(ChargingEntity, SensorEntity):
 
 
 class SunriseEnergySensor(ChargingEntity, SensorEntity):
-    """An energy worked out from the PV Forecast and the Expected Load, in kWh."""
+    """An energy at sunrise or after it, worked out from the plan, in kWh."""
 
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_suggested_display_precision = 2
 
     def __init__(self, house: House, key: str) -> None:
-        """Create the sensor ``energy_needed_at_sunrise``, ``battery_at_sunrise`` or
-        ``forecast_surplus``.
-        """
+        """Create the sensor ``battery_at_sunrise`` or ``forecast_surplus``."""
         super().__init__(house, key, "sensor")
         self._attr_translation_key = key
         self._key = key
@@ -837,8 +861,6 @@ class SunriseEnergySensor(ChargingEntity, SensorEntity):
     def native_value(self) -> float | None:
         """The energy, unknown while it cannot be computed."""
         charging = self.charging
-        if self._key == "energy_needed_at_sunrise":
-            return charging.energy_needed
         if self._key == "battery_at_sunrise":
             return charging.battery_at_sunrise
         return charging.forecast_surplus
