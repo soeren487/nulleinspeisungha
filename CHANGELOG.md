@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 ### Added
 
@@ -11,6 +11,8 @@
 
 - The local midnight is taken as the end of the day; Victron does not document when its day ends.
 - Whether 95 % was reached today is kept in memory only. After a restart of Home Assistant on a day that already reached 95 % the top-up may be bought once more.
+- Each day the battery reaches 95 % lowers the Victron's minimum by only 5 %, so from 75 % back to 20 % takes about eleven such days. With BatteryLife off on the GX the top-up never runs.
+- Restart Home Assistant after updating.
 
 ## 0.8.0
 
