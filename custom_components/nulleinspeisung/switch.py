@@ -48,6 +48,7 @@ async def async_setup_entry(
                     GridChargingSwitch(house),
                     IgnoreEfficiencySwitch(house),
                     UseForecastSwitch(house),
+                    TopUpSwitch(house),
                 ]
                 if house.grid_charging is not None
                 else []
@@ -269,3 +270,32 @@ class UseForecastSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Fill up to the Charge Target regardless of the forecast."""
         self.charging.set_use_forecast(False)
+
+
+class TopUpSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
+    """Whether Grid Charging charges to 95 % so that BatteryLife lowers its minimum."""
+
+    _attr_translation_key = "batterylife_top_up"
+
+    def __init__(self, house: House) -> None:
+        """Create the switch."""
+        super().__init__(house, "batterylife_top_up", "switch")
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the position the owner left it in; on by default."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        self.charging.top_up = last is None or last.state != STATE_OFF
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the BatteryLife Top-up may be planned."""
+        return self.charging.top_up
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Plan the top-up when BatteryLife has raised its minimum."""
+        self.charging.set_top_up(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Plan no top-up."""
+        self.charging.set_top_up(False)

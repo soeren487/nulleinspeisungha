@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Grid charging tops the battery up to 95 % once a day so that BatteryLife lowers its minimum.** With the Victron's ESS mode "Optimized (with BatteryLife)" the minimum charge level rises by 5 % on every day without a good charge, up to 80 %, and falls by 5 % only on a day the battery reaches 95 %. Since the shortfall planning buys only what expensive periods need, the battery seldom reached 95 % in autumn and winter and the minimum climbed (75 % was seen with 20 % configured). While the minimum the Victron applies is above the configured one and the battery has not reached 95 % on the current local day, the plan now charges up to 95 % in the cheapest qualifying quarter-hours of the rest of the day. It is planned before the shortfalls, so they count the energy it stores and nothing is bought twice. Nothing is bought when the counted PV forecast reaches 95 % anyway, when no qualifying quarter-hour is left today, or when the Charge Target is below 95 %; the efficiency test does not apply, the Maximum Charge Power does.
+- A switch "BatteryLife top-up" ("BatteryLife-Vollladung") on the Grid charging device turns it off; it is on by default. A sensor "Energy for BatteryLife top-up" ("Energie für BatteryLife-Vollladung") shows the energy planned for it; its attribute `wanted` says whether a top-up was asked for.
+
+### Good to know
+
+- The local midnight is taken as the end of the day; Victron does not document when its day ends.
+- Whether 95 % was reached today is kept in memory only. After a restart of Home Assistant on a day that already reached 95 % the top-up may be bought once more.
+
 ## 0.8.0
 
 ### Changed

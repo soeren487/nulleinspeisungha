@@ -341,6 +341,9 @@
       "uncovered_shortfall": {
         "name": "Uncovered shortfall"
       },
+      "top_up_energy": {
+        "name": "Energy for BatteryLife top-up"
+      },
       "battery_at_sunrise": {
         "name": "Battery at sunrise"
       },
@@ -377,6 +380,9 @@
       },
       "use_forecast": {
         "name": "Use PV forecast"
+      },
+      "batterylife_top_up": {
+        "name": "BatteryLife top-up"
       }
     },
     "number": {

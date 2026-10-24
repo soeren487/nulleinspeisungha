@@ -6,6 +6,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from homeassistant.components.sensor import (
     RestoreSensor,
@@ -264,6 +265,7 @@ async def async_setup_entry(
                     ChargingEnergySensor(house, "energy_missing"),
                     ChargingEnergySensor(house, "expensive_shortfall"),
                     ChargingEnergySensor(house, "uncovered_shortfall"),
+                    ChargingEnergySensor(house, "top_up_energy"),
                     ReferencePriceSensor(house),
                     SunriseEnergySensor(house, "battery_at_sunrise"),
                     SunriseEnergySensor(house, "forecast_surplus"),
@@ -817,7 +819,15 @@ class ChargingEnergySensor(ChargingEntity, SensorEntity):
             "energy_missing": plan.energy_missing,
             "expensive_shortfall": plan.shortfall,
             "uncovered_shortfall": plan.uncovered,
+            "top_up_energy": plan.top_up_kwh,
         }[self._key]
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Whether a top-up was asked for in the current plan."""
+        if self._key != "top_up_energy":
+            return None
+        return {"wanted": self.charging.top_up_wanted}
 
 
 class ReferencePriceSensor(ChargingEntity, SensorEntity):

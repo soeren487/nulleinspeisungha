@@ -341,6 +341,9 @@
       "uncovered_shortfall": {
         "name": "Nicht gedeckter Engpass"
       },
+      "top_up_energy": {
+        "name": "Energie für BatteryLife-Vollladung"
+      },
       "battery_at_sunrise": {
         "name": "Batterie bei Sonnenaufgang"
       },
@@ -377,6 +380,9 @@
       },
       "use_forecast": {
         "name": "PV-Prognose berücksichtigen"
+      },
+      "batterylife_top_up": {
+        "name": "BatteryLife-Vollladung"
       }
     },
     "number": {

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from collections.abc import Callable, Mapping
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -27,10 +27,12 @@ from .battery_gateway import minimum_floor
 from .charging_planner import (
     MAX_HORIZON,
     SLOT,
+    TOP_UP_LEVEL,
     BatteryModel,
     ChargingPlan,
     PlanReason,
     Quarter,
+    TopUp,
     discharge_block_active,
     plan_charging,
     slot_length,
@@ -46,6 +48,9 @@ DEFAULT_BATTERY_EFFICIENCY = 78.0
 """Percent, as a round trip."""
 DEFAULT_FORECAST_SHARE = 70.0
 """Percent of the PV Forecast that is counted."""
+TOP_UP_MARGIN = 0.5
+"""Percentage points the active minimum must lie above the configured one for
+BatteryLife to count as having raised it."""
 
 PRICE_LEVEL_VERY_CHEAP = "very_cheap"
 PRICE_LEVEL_CHEAP_AND_BELOW = "cheap_and_below"
@@ -110,6 +115,10 @@ class GridCharging:
         self.use_forecast = True
         """Whether the PV Forecast may limit the energy to buy, once it is usable."""
         self.forecast_share = DEFAULT_FORECAST_SHARE
+        self.top_up = True
+        """Whether the BatteryLife Top-up may be planned."""
+        self.top_up_wanted = False
+        """Whether the current plan was asked for a BatteryLife Top-up."""
         self.forecast_in_use = False
         """Whether the current plan was computed with the forecast bound."""
         self.battery_at_sunrise: float | None = None
@@ -127,6 +136,9 @@ class GridCharging:
         self._planned_floor: float | None = None
         self._planned_power: float | None = None
         self._planned_dc: dict[str, float] = {}
+        self._top_up_day: date | None = None
+        self._reached_today = False
+        """Whether the battery reached the top-up level on ``_top_up_day``."""
         self._last_wanted: int | None = None
         self._started = False
         self._unsubs: list[CALLBACK_TYPE] = []
@@ -180,6 +192,11 @@ class GridCharging:
     def set_use_forecast(self, use: bool) -> None:
         """Let the PV Forecast limit the energy to buy, or not."""
         self.use_forecast = use
+        self._settings_changed()
+
+    def set_top_up(self, on: bool) -> None:
+        """Allow the BatteryLife Top-up, or not."""
+        self.top_up = on
         self._settings_changed()
 
     def set_forecast_share(self, percent: float) -> None:
@@ -274,10 +291,12 @@ class GridCharging:
         battery = self._house.battery
         level = battery.charge_level if battery is not None else None
         plan = self.plan
+        reached_flipped = self._track_top_up_level(level, dt_util.utcnow())
         if (
             level is not None
             and (
-                self._planned_level is None
+                reached_flipped
+                or self._planned_level is None
                 or abs(level - self._planned_level) >= REPLAN_LEVEL_STEP
                 or self.battery_floor() != self._planned_floor
                 or (
@@ -291,6 +310,36 @@ class GridCharging:
         else:
             self._evaluate()
             self._notify()
+
+    def _track_top_up_level(self, level: float | None, now: datetime) -> bool:
+        """Remember whether the battery reached the top-up level on the local day of
+        ``now``; whether that changed (a new day that starts again does not count)."""
+        today = dt_util.as_local(now).date()
+        if today != self._top_up_day:
+            self._top_up_day = today
+            self._reached_today = False
+        if level is None or self._reached_today or level < TOP_UP_LEVEL:
+            return False
+        self._reached_today = True
+        return True
+
+    def _top_up_for(self, now: datetime) -> TopUp | None:
+        """The BatteryLife Top-up to plan, if one is wanted."""
+        battery = self._house.battery
+        if (
+            not self.top_up
+            or battery is None
+            or self._reached_today
+            or battery.active_minimum_soc is None
+            or battery.configured_minimum_soc is None
+            or battery.active_minimum_soc
+            <= battery.configured_minimum_soc + TOP_UP_MARGIN
+        ):
+            return None
+        midnight = dt_util.start_of_local_day(
+            dt_util.as_local(now).date() + timedelta(days=1)
+        )
+        return TopUp(level=TOP_UP_LEVEL, end=midnight)
 
     @callback
     def _on_publisher(self) -> None:
@@ -314,6 +363,7 @@ class GridCharging:
         prices = house.prices
         capacity = house.config.battery_capacity
         level = battery.charge_level if battery is not None else None
+        self._track_top_up_level(level, now)
         self.deadline = solar.next_sunrise(
             house.config.latitude, house.config.longitude, now
         )
@@ -322,6 +372,7 @@ class GridCharging:
         pv = self._compute_forecast(load)
         self.forecast_in_use = False
         self.battery_at_sunrise = None
+        self.top_up_wanted = False
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
@@ -334,6 +385,8 @@ class GridCharging:
         use_pv = self.use_forecast and forecast is not None and forecast.usable
         self.forecast_in_use = use_pv and bool(pv)
         share = self.forecast_share / 100.0
+        top_up = self._top_up_for(now)
+        self.top_up_wanted = top_up is not None
         self.plan = plan_charging(
             now,
             self._quarters(
@@ -356,6 +409,7 @@ class GridCharging:
             ),
             sunrise=self.deadline,
             running=self._running_slot(now),
+            top_up=top_up,
         )
         self.battery_at_sunrise = self.plan.battery_at_sunrise
 

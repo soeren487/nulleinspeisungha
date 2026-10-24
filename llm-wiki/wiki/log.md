@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-24
+* **Update**: [Requirements decisions](project/requirements-decisions.md) and [Overview](project/overview.md): BatteryLife top-up (ticket 33).
 * **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): how BatteryLife raises and lowers its active minimum, from the ESS manual.
 * **Update**: [Requirements decisions](project/requirements-decisions.md): the sunrise-based forecast rule is replaced by shortfall planning (ticket 32).
 * **Update**: [Overview](project/overview.md): state brought up to date (releases up to 0.7.0, ticket 31 merged).
