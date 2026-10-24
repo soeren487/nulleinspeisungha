@@ -102,6 +102,10 @@ _Avoid_: Comparison price, later price
 Grid Charging up to 95 % once a day in qualifying quarter-hours, so that the AC Battery's Victron lowers the minimum charge level its BatteryLife has raised.
 _Avoid_: Full charge, equalisation, maintenance charge
 
+**Safety Buffer**:
+The share of the Maximum Charge Power that Grid Charging keeps in reserve when it checks whether it could still charge in time if the PV Forecast does not come true.
+_Avoid_: Margin, reserve, headroom
+
 **Discharge Block**:
 A period during which an AC Battery must not discharge, because the Price Level is low and the stored energy is worth more later.
 _Avoid_: Hold, discharge lock

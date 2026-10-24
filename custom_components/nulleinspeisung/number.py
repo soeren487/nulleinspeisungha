@@ -29,6 +29,7 @@ from .grid_charging import (
     DEFAULT_BATTERY_EFFICIENCY,
     DEFAULT_CHARGE_TARGET,
     DEFAULT_FORECAST_SHARE,
+    DEFAULT_SAFETY_BUFFER,
 )
 from .house import House
 from .house_control import (
@@ -218,6 +219,19 @@ CHARGING_DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
         default=DEFAULT_FORECAST_SHARE,
         getter=lambda charging: charging.forecast_share,
         setter=lambda charging, value: charging.set_forecast_share(value),
+    ),
+    HouseNumberDescription(
+        key="safety_buffer",
+        translation_key="safety_buffer",
+        native_unit_of_measurement=PERCENTAGE,
+        native_min_value=0,
+        native_max_value=90,
+        native_step=5,
+        mode=NumberMode.BOX,
+        entity_category=EntityCategory.CONFIG,
+        default=DEFAULT_SAFETY_BUFFER,
+        getter=lambda charging: charging.safety_buffer,
+        setter=lambda charging, value: charging.set_safety_buffer(value),
     ),
 )
 

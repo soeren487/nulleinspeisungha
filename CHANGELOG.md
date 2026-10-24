@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A Safety Buffer makes grid charging start in time when the sun stays away.** The plan counts the PV forecast and, on equal prices, charges in the latest qualifying quarter-hours. That is right when the forecast comes true, but on a cloudy day the plan noticed only during the day, and few qualifying quarter-hours were left (on 2026-10-25 the top-up for 95 % was planned for 15:00 to 15:30 only, counting on 7.3 kWh of forecast, with the same price from 02:15 to 15:15). In every planning run the House now also plans two pessimistic cases at the Maximum Charge Power reduced by the Safety Buffer, with the qualifying quarter-hours taken latest first: the top-up alone with no PV from now on, and the top-up and the shortfalls with the counted PV forecast (for shortfalls the buffer is a time margin, not a bet against the forecast; otherwise every cheap night before an expensive day would be charged in and the sun's room lost). If either needs the current quarter-hour, the House charges now; the rest of the plan stays the normal one, so the sun still has the room it is expected to fill.
+- A number "Safety buffer" ("Sicherheitspuffer") on the Grid charging device sets the share of the Maximum Charge Power held back in that case, 0 to 90 %, 50 % by default. At 50 % charging starts at the latest when the remaining qualifying quarter-hours, at half power, are just enough (without sun for the top-up); at 0 % the top-up case still assumes no sun, at full power. A binary sensor "Safety buffer active" ("Sicherheitspuffer greift") is on while the buffer is what makes the House charge now.
+
+### Good to know
+
+- With the default of 50 % the House may charge somewhat earlier, and buy a little more, than before on days that turn out sunny. Set the buffer to 0 % to keep the sun's room as large as possible.
+
 ## 0.9.0
 
 ### Added

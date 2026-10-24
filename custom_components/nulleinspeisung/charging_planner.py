@@ -19,8 +19,8 @@ stored above the minimum charge level (the floor).
 from __future__ import annotations
 
 import math
-from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Sequence
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from itertools import pairwise
@@ -144,6 +144,9 @@ class ChargingPlan:
     """kWh to draw from the grid in all planned quarter-hours."""
     top_up_kwh: float
     """kWh of it planned for the BatteryLife Top-up; 0 without one."""
+    buffer_kwh: float
+    """kWh of it in the current quarter-hour that only the Safety Buffer makes the
+    plan buy; 0 when the plan would charge there anyway or no buffer was given."""
     shortfall: float
     """kWh the House would have to take from the grid at prices that do not
     qualify, without any charging."""
@@ -293,6 +296,7 @@ def plan_charging(
     sunrise: datetime | None = None,
     running: datetime | None = None,
     top_up: TopUp | None = None,
+    buffer: float | None = None,
 ) -> ChargingPlan:
     """Plan the charging that spares the House from buying at dear prices.
 
@@ -328,6 +332,23 @@ def plan_charging(
     start before its end, without the efficiency test, within the Maximum Charge
     Power and the Charge Target, until the content reaches the top-up level at some
     point of the window. It is skipped when the Charge Target lies below that level.
+
+    ``buffer`` (the Safety Buffer, a fraction of the Maximum Charge Power held
+    back; ``None`` for none) adds two pessimistic runs, both with the Maximum Charge
+    Power reduced by the buffer and the candidates taken latest first whatever
+    they cost (the running quarter-hour still first); they ask when charging must
+    start at the latest. (1) The top-up alone, without any PV. (2) The top-up and
+    the shortfalls with the counted PV as given: for the shortfalls the buffer is
+    a time margin at reduced power, not a bet against the forecast (that would
+    force charging every night before an expensive day). When the larger of the
+    two puts energy into the current quarter-hour, the real plan gets that
+    quarter-hour (the pessimistic energy scaled back to the full power, within the
+    Charge Target) before it is planned as above; the rest of the plan stays the
+    normal one. The forced energy counts to ``top_up_kwh`` when run (1) gives the
+    larger amount or the top-up phase of run (2) used the quarter-hour, else to the
+    shortfalls; ``buffer_kwh`` is
+    what it adds to the quarter-hour compared with the plan without the buffer (and
+    without the place a running quarter-hour keeps).
     """
     now = _utc(now)
     horizon = now + MAX_HORIZON
@@ -344,6 +365,7 @@ def plan_charging(
             slots=(),
             energy_to_buy=0.0,
             top_up_kwh=0.0,
+            buffer_kwh=0.0,
             shortfall=0.0,
             uncovered=0.0,
             reference_price=None,
@@ -354,8 +376,7 @@ def plan_charging(
 
     model = _Model(now, series, battery, running)
     n = len(series)
-    planned = [0.0] * n
-    first = model.run(planned)
+    first = model.run([0.0] * n)
     total_before = sum(first.shortfall)
     reference = (
         sum(s * series[i].price for i, s in enumerate(first.shortfall)) / total_before
@@ -363,17 +384,38 @@ def plan_charging(
         else None
     )
 
-    top_up_kwh = 0.0
+    wanted: float | None = None
+    top_end = _utc(top_up.end) if top_up is not None else now
     if top_up is not None:
         floor = min(max(battery.floor, 0.0), 100.0)
-        wanted = max(battery.capacity_kwh * (top_up.level - floor) / 100.0, 0.0)
-        if wanted <= model.target + _FIT:
-            _plan_top_up(model, planned, wanted, _utc(top_up.end))
-            top_up_kwh = sum(planned)
+        level = max(battery.capacity_kwh * (top_up.level - floor) / 100.0, 0.0)
+        if level <= model.target + _FIT:
+            wanted = level
 
-    final = model.run(planned) if top_up_kwh > 0.0 else first
-    if sum(final.shortfall) > _EPSILON:
-        final = _cover(model, planned, final)
+    preset = 0.0
+    forced_by_shortfall = False
+    if buffer is not None and _utc(series[0].start) <= now:
+        preset, forced_by_shortfall = _buffer_start(
+            model, series, battery, buffer, wanted, top_end, running, now
+        )
+    planned = [0.0] * n
+    if preset > _EPSILON:
+        planned[0] = preset
+    top_up_kwh, final = _plan_all(model, planned, wanted, top_end, latest=False)
+    if forced_by_shortfall:
+        top_up_kwh = max(top_up_kwh - preset, 0.0)
+
+    buffer_kwh = 0.0
+    if preset > _EPSILON:
+        # Without the running quarter-hour's place: that is kept by an earlier
+        # plan, and it may have been the buffer that put it there.
+        plain = [0.0] * n
+        _plan_all(
+            _Model(now, series, battery, None), plain, wanted, top_end, latest=False
+        )
+        buffer_kwh = max(planned[0] - plain[0], 0.0)
+        if buffer_kwh <= _EPSILON:
+            buffer_kwh = 0.0
 
     slots = tuple(
         PlannedSlot(
@@ -393,6 +435,7 @@ def plan_charging(
         slots=slots,
         energy_to_buy=sum(planned),
         top_up_kwh=top_up_kwh,
+        buffer_kwh=buffer_kwh,
         shortfall=total_before,
         uncovered=uncovered,
         reference_price=reference,
@@ -400,6 +443,82 @@ def plan_charging(
         battery_at_sunrise=at_sunrise,
         reason=_reason(model, series, first, slots),
     )
+
+
+def _plan_all(
+    model: _Model,
+    planned: list[float],
+    wanted: float | None,
+    end: datetime,
+    latest: bool,
+) -> tuple[float, _Run]:
+    """Plan the top-up (``wanted`` is its content, ``None`` for none), then the
+    shortfalls, in ``planned`` in place. Returns the energy in ``planned`` after
+    the top-up and the final run."""
+    top_up_kwh = 0.0
+    if wanted is not None:
+        _plan_top_up(model, planned, wanted, end, latest)
+        top_up_kwh = sum(planned)
+    run = model.run(planned)
+    if sum(run.shortfall) > _EPSILON:
+        run = _cover(model, planned, run, latest)
+    return top_up_kwh, run
+
+
+def _buffer_start(
+    model: _Model,
+    series: Sequence[Quarter],
+    battery: BatteryModel,
+    buffer: float,
+    wanted: float | None,
+    end: datetime,
+    running: datetime | None,
+    now: datetime,
+) -> tuple[float, bool]:
+    """What the two pessimistic runs put into the current quarter-hour (the larger),
+    as grid kWh at the real power, and whether it came from the shortfalls (else
+    the top-up)."""
+    share = min(max(buffer, 0.0), 0.99)
+    reduced = replace(
+        battery, max_charge_power=battery.max_charge_power * (1.0 - share)
+    )
+    n = len(series)
+    from_top_up = 0.0
+    if wanted is not None:
+        # Run 1: the top-up alone, without any PV.
+        dark = _Model(now, [replace(q, pv_w=0.0) for q in series], reduced, running)
+        planned = [0.0] * n
+        _plan_top_up(dark, planned, wanted, end, latest=True)
+        from_top_up = planned[0]
+    # Run 2: top-up and shortfalls with the counted PV, as a time margin.
+    counted = _Model(now, series, reduced, running)
+    planned = [0.0] * n
+    top_phase = 0.0
+    if wanted is not None:
+        _plan_top_up(counted, planned, wanted, end, latest=True)
+        top_phase = planned[0]
+    run = counted.run(planned)
+    if sum(run.shortfall) > _EPSILON:
+        _cover(counted, planned, run, latest=True)
+    from_both = planned[0]
+    biggest = max(from_top_up, from_both)
+    if biggest <= _EPSILON:
+        return 0.0, False
+    scaled = min(model.max_grid(0), biggest / (1.0 - share))
+    amount = _feasible(model, [0.0] * n, 0, scaled)
+    by_top_up = from_top_up >= from_both - _EPSILON or top_phase > _EPSILON
+    return amount, not by_top_up
+
+
+def _order(model: _Model, latest: bool) -> Callable[[int], tuple[bool, float, int]]:
+    """The sort key of the candidate quarters: the running one first, then the
+    cheapest (the later one on equal prices), or with ``latest`` the latest."""
+    series = model.quarters
+
+    def key(j: int) -> tuple[bool, float, int]:
+        return (j != model.running, 0.0 if latest else series[j].price, -j)
+
+    return key
 
 
 def _content_at(series: Sequence[Quarter], run: _Run, sunrise: datetime) -> float:
@@ -449,7 +568,11 @@ def _peak(run: _Run, window: int) -> float:
 
 
 def _plan_top_up(
-    model: _Model, planned: list[float], content: float, end: datetime
+    model: _Model,
+    planned: list[float],
+    content: float,
+    end: datetime,
+    latest: bool = False,
 ) -> None:
     """Plan charging (in ``planned``, in place) until the content reaches
     ``content`` at some point before ``end``, or no step helps."""
@@ -470,7 +593,7 @@ def _plan_top_up(
                 for j in range(window)
                 if series[j].qualifies and planned[j] < model.max_grid(j) - _EPSILON
             ),
-            key=lambda j: (j != model.running, series[j].price, -j),
+            key=_order(model, latest),
         )
         for j in candidates:
             room = model.max_grid(j) - planned[j]
@@ -489,7 +612,9 @@ def _plan_top_up(
             return
 
 
-def _cover(model: _Model, planned: list[float], first: _Run) -> _Run:
+def _cover(
+    model: _Model, planned: list[float], first: _Run, latest: bool = False
+) -> _Run:
     """Plan charging (in ``planned``, in place) for the shortfalls; the final run."""
     n = len(model.quarters)
     run = first
@@ -505,7 +630,7 @@ def _cover(model: _Model, planned: list[float], first: _Run) -> _Run:
         if not open_shortfalls:
             break
         target = open_shortfalls[0]
-        run = _cover_one(model, planned, run, target, given_up) or run
+        run = _cover_one(model, planned, run, target, given_up, latest) or run
     return model.run(planned)
 
 
@@ -515,6 +640,7 @@ def _cover_one(
     run: _Run,
     target: int,
     given_up: set[int],
+    latest: bool = False,
 ) -> _Run | None:
     """Buy for the shortfall at ``target``; ``None`` (and given up) when it fails."""
     series = model.quarters
@@ -531,8 +657,9 @@ def _cover_one(
     # The quarter-hour being charged in comes first, whatever the others cost: a
     # plan that moved on to a later equal or cheaper quarter-hour in the middle of
     # a quarter-hour would stop the charging and start it again. Then the
-    # cheapest first; on equal prices the later one.
-    candidates.sort(key=lambda j: (j != model.running, series[j].price, -j))
+    # cheapest first; on equal prices the later one. With ``latest`` the price
+    # is ignored: the latest first.
+    candidates.sort(key=_order(model, latest))
     wanted = run.shortfall[target] / model.efficiency
     before_total = sum(run.shortfall)
     for j in candidates:

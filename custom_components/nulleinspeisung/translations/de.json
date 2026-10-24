@@ -197,6 +197,9 @@
       },
       "forecast_in_use": {
         "name": "PV-Prognose wird verwendet"
+      },
+      "safety_buffer_active": {
+        "name": "Sicherheitspuffer greift"
       }
     },
     "sensor": {
@@ -418,6 +421,9 @@
       },
       "forecast_share": {
         "name": "Angerechneter Anteil der PV-Prognose"
+      },
+      "safety_buffer": {
+        "name": "Sicherheitspuffer"
       }
     },
     "select": {

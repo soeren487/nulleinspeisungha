@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -965,3 +965,208 @@ def test_without_a_top_up_the_plan_is_what_it_was() -> None:
 
     assert plan.top_up_kwh == 0.0
     assert plan.energy_to_buy == pytest.approx((1.2 - 0.1 * E) / 0.78)
+
+
+# -- the Safety Buffer -------------------------------------------------------
+
+
+def buffer_day(
+    qualifying_until: str, evening: float = 0.0, pv_w: float = 4000.0
+) -> list[Quarter]:
+    """10:00 to midnight: 0.10 and qualifying until ``qualifying_until``, 0.30 and
+    not after it. 4 kW of counted PV from 12:00 to 14:00; ``evening`` W of load from
+    17:00 to 21:00."""
+    quarters = []
+    moment = at("10:00")
+    while moment < at("24:00"):
+        qualifies = moment < at(qualifying_until)
+        pv = pv_w if at("12:00") <= moment < at("14:00") else 0.0
+        load = evening if at("17:00") <= moment < at("21:00") else 0.0
+        quarters.append(
+            Quarter(moment, 0.10 if qualifies else 0.30, qualifies, load, pv)
+        )
+        moment += QUARTER
+    return quarters
+
+
+def buffer_top_up(qualifying_until: str, buffer: float | None = 0.5, **kw):
+    """10:00, 87 % (8.7 of 10 kWh): 0.8 kWh stored, 0.906 kWh bought, reach 95 %."""
+    settings = {"charge_level": 87.0} | kw
+    return plan_charging(
+        at("10:00"),
+        buffer_day(qualifying_until),
+        battery(**settings),
+        top_up=TOP_UP,
+        buffer=buffer,
+    )
+
+
+def buffer_shortfall(qualifying_until: str, buffer: float | None = 0.5, **kw):
+    """10:00, empty battery, 500 W of load from 17:00 to 21:00 at a dear price and
+    no counted PV: the 2.0 kWh it needs take 2.564 kWh bought, 9.77 quarter-hours
+    at half power."""
+    settings = {"charge_level": 0.0} | kw
+    return plan_charging(
+        at("10:00"),
+        buffer_day(qualifying_until, evening=500.0, pv_w=0.0),
+        battery(**settings),
+        buffer=buffer,
+    )
+
+
+def test_with_plenty_of_time_left_the_sun_is_trusted_for_now() -> None:
+    """The owner's 2026-10-25: 13 h of the same price ahead, the PV fills the rest."""
+    result = buffer_top_up("23:00")
+
+    assert at("10:00") not in [s.start for s in result.slots]
+    assert result.buffer_kwh == 0.0
+    # Without the sun the top-up is six half-power quarter-hours at the very end.
+    assert result.energy_to_buy == pytest.approx(0.0)
+
+
+def test_with_only_just_enough_quarters_left_the_current_one_is_charged() -> None:
+    """Four quarter-hours at half power without PV are just enough (3.45 needed)."""
+    result = buffer_top_up("11:00")
+
+    assert starts(result) == ["10:00"]
+    assert result.buffer_kwh > 0.0
+    assert result.reason is PlanReason.CHARGING_PLANNED
+    # The forced energy is the top-up's: the pessimistic top-up used the quarter.
+    assert result.top_up_kwh == pytest.approx(result.buffer_kwh)
+    # Only the current quarter is taken over: the sun still has the rest.
+    assert result.energy_to_buy == pytest.approx(result.buffer_kwh)
+
+
+def test_one_quarter_more_than_needed_and_the_plan_is_the_normal_one() -> None:
+    result = buffer_top_up("11:15")
+
+    assert result.slots == ()
+    assert result.buffer_kwh == 0.0
+
+
+def test_without_a_buffer_the_plan_is_the_old_one() -> None:
+    result = buffer_top_up("11:00", buffer=None)
+
+    assert result.slots == ()
+    assert result.buffer_kwh == 0.0
+    assert result == plan_charging(
+        at("10:00"),
+        buffer_day("11:00"),
+        battery(charge_level=87.0),
+        top_up=TOP_UP,
+    )
+
+
+def test_a_buffer_of_zero_assumes_no_sun_at_full_power() -> None:
+    """Full power: 0.906 kWh take 1.73 quarter-hours."""
+    assert starts(buffer_top_up("10:30", buffer=0.0)) == ["10:00"]
+    assert buffer_top_up("10:45", buffer=0.0).slots == ()
+    # The same three quarter-hours do not suffice at half power.
+    assert starts(buffer_top_up("10:45", buffer=0.5)) == ["10:00"]
+
+
+def test_a_shortfall_is_treated_like_the_top_up() -> None:
+    forced = buffer_shortfall("12:30")
+    assert "10:00" in starts(forced)
+    assert forced.buffer_kwh > 0.0
+    # No top-up asked for: the energy is the shortfall's.
+    assert forced.top_up_kwh == 0.0
+
+    relaxed = buffer_shortfall("12:45")
+    assert "10:00" not in starts(relaxed)
+    assert relaxed.buffer_kwh == 0.0
+
+
+def test_the_efficiency_test_still_stops_the_pessimistic_shortfall_cover() -> None:
+    """0.25 divided by the shortfall's 0.30 is above the efficiency of 0.78."""
+    quarters = [
+        replace(q, price=0.25) if q.qualifies else q
+        for q in buffer_day("12:30", 500.0, pv_w=0.0)
+    ]
+    blocked = plan_charging(
+        at("10:00"), quarters, battery(charge_level=0.0), buffer=0.5
+    )
+    assert blocked.slots == ()
+    assert blocked.buffer_kwh == 0.0
+
+    # Skipping the test makes the same day force the current quarter.
+    ignoring = plan_charging(
+        at("10:00"),
+        quarters,
+        battery(charge_level=0.0, ignore_efficiency=True),
+        buffer=0.5,
+    )
+    assert "10:00" in starts(ignoring)
+
+
+def test_the_charge_target_limits_what_the_buffer_forces() -> None:
+    """Target 20 % (2.0 kWh): 8 quarter-hours at half power cannot reach it, so
+    all are needed, and still nothing is stored above the target."""
+    result = buffer_shortfall("12:00", charge_target=20.0)
+
+    assert "10:00" in starts(result)
+    assert result.buffer_kwh > 0.0
+    assert result.energy_to_buy * E <= 2.0 + 1e-6
+
+
+def test_a_quarter_hour_charged_in_stays_in_the_plan_while_the_buffer_needs_it() -> (
+    None
+):
+    """A replan five minutes into the quarter-hour does not drop it."""
+    result = plan_charging(
+        at("10:00") + timedelta(minutes=5),
+        buffer_day("11:00"),
+        battery(charge_level=87.0),
+        running=at("10:00"),
+        top_up=TOP_UP,
+        buffer=0.5,
+    )
+
+    assert starts(result) == ["10:00"]
+    assert result.buffer_kwh > 0.0
+
+
+def sunny_day_after_a_cheap_night(pv_w: float) -> list[Quarter]:
+    """02:00 to midnight: cheap qualifying night until 07:00, then dear; 800 W of
+    load from 07:00 to 21:00 and ``pv_w`` of counted PV from 08:00 to 17:00."""
+    quarters = []
+    moment = at("02:00")
+    while moment < at("24:00"):
+        night = moment < at("07:00")
+        day_load = at("07:00") <= moment < at("21:00")
+        sun = at("08:00") <= moment < at("17:00")
+        quarters.append(
+            Quarter(
+                moment,
+                0.10 if night else 0.30,
+                night,
+                800.0 if day_load else 0.0,
+                pv_w if sun else 0.0,
+            )
+        )
+        moment += QUARTER
+    return quarters
+
+
+def test_a_cheap_night_before_a_sunny_day_is_not_charged_in_for_the_shortfalls() -> (
+    None
+):
+    """The counted forecast covers the day, so the shortfalls need nothing; the
+    buffer is a time margin there, not a bet against the sun."""
+    result = plan_charging(
+        at("02:00"),
+        sunny_day_after_a_cheap_night(1500.0),
+        battery(charge_level=50.0),
+        buffer=0.5,
+    )
+    assert result.slots == ()
+    assert result.buffer_kwh == 0.0
+
+    # Had the shortfalls been planned without PV, the night would be needed.
+    no_pv = plan_charging(
+        at("02:00"),
+        sunny_day_after_a_cheap_night(0.0),
+        battery(charge_level=50.0),
+        buffer=0.5,
+    )
+    assert at("02:00") in [s.start for s in no_pv.slots]
