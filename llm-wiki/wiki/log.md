@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-10-24
+* **Update**: [Requirements decisions](project/requirements-decisions.md): the sunrise-based forecast rule is replaced by shortfall planning (ticket 32).
 * **Update**: [Overview](project/overview.md): state brought up to date (releases up to 0.7.0, ticket 31 merged).
 
 ## 2026-10-06

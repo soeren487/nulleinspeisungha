@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant
 
 from tests.conftest import DtuNetwork, SimGx, SimTibber
 from tests.test_grid_charging_flow import (
+    CHEAP_PAIR,
     DYNAMIC_ESS,
     NIGHT_PRICES,
     _call,
@@ -171,7 +172,11 @@ async def test_the_block_stays_while_charging_ends_inside_it(
     mqtt_mock: MagicMock,
     freezer,
 ) -> None:
-    """The battery gets full during a cheap quarter-hour: the setpoint goes only."""
+    """The battery gets full during a cheap quarter-hour: the setpoint goes only.
+
+    Only two adjacent cheap quarter-hours exist: with more of them later, the
+    plan would wait for one after the battery has been used a little.
+    """
     _entry, gx = await _setup(
         hass,
         dtu_network,
@@ -179,7 +184,7 @@ async def test_the_block_stays_while_charging_ends_inside_it(
         freezer,
         at="2026-10-05T02:05",
         level=99.0,
-        prices=NIGHT_PRICES,
+        prices=CHEAP_PAIR,
     )
     assert _writes(gx) == [2200.0]
     gx.charge(level=100.0)

@@ -2,13 +2,19 @@
 
 The House is in Berlin (52.5 N, 13.4 E). The night starts at 22:00 on 4 October
 2026; the next sunrise is about 07:14 local time (UTC+2). The AC Battery has
-10 kWh and charges at 2100 W, the efficiency is 78 %.
+10 kWh and charges at 2100 W, the efficiency is 78 %. The Victron's minimum
+stands at 20 %. Unless a test says otherwise the Expected Load is the fallback of
+10 kWh a day (417 W), no PV Forecast is used, prices are known from 22:00 on the
+4th to the end of the 5th (104 quarter-hours, all normal at 0.40 but for the ones
+a test names), so the battery is short of energy before the day is over and the
+plan is limited by the cheap quarter-hours alone.
 """
 
 from __future__ import annotations
 
 import json
 import math
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
@@ -42,6 +48,13 @@ DYNAMIC_ESS = "settings/0/Settings/DynamicEss/Mode"
 NORMAL = (0.40, "NORMAL")
 ROOT = math.sqrt(0.78)
 TZ_OFFSET = timedelta(hours=2)
+LOAD_KWH = 10.0 / 24 / 4
+"""The Expected Load in a quarter-hour, kWh."""
+DRAIN_SLOTS = 99
+"""Of the 104 quarter-hours to the end of the 5th, 99 do not qualify (the five
+of NIGHT_PRICES are Discharge Blocks)."""
+GRID_PER_SLOT = 0.525
+"""kWh from the grid in a quarter-hour at 2100 W."""
 
 
 @pytest.fixture
@@ -127,11 +140,21 @@ async def _setup(
     switches: dict[str, str | None] | None = None,
     prices: dict[str, tuple[float, str]] | None = None,
     production: tuple[float, float] = (200.0, 0.0),
+    daily_kwh: float | None = None,
+    active_minimum: float | None = None,
+    price_setup: Callable[[SimTibber], None] | None = None,
     **house: Any,
 ):
     await _clock(hass, freezer, at)
-    _prices(tibber, tomorrow=prices if prices is not None else NIGHT_PRICES)
+    if price_setup is not None:
+        price_setup(tibber)
+    else:
+        _prices(tibber, tomorrow=prices if prices is not None else NIGHT_PRICES)
     gx = gx or SimGx()
+    if active_minimum is not None:
+        gx.topics["system/0/Control/ActiveSocLimit"] = json.dumps(
+            {"value": active_minimum}
+        )
     gx.charge(level=level, power=0.0)
     _grid(hass, grid)
     stored = {
@@ -158,6 +181,11 @@ async def _setup(
         ],
         tibber=tibber,
     )
+    if daily_kwh is not None:
+        next(iter(entry.runtime_data.houses.values())).expected_load.set_fallback_kwh(
+            daily_kwh
+        )
+        await hass.async_block_till_done()
     return entry, gx
 
 
@@ -227,14 +255,23 @@ async def test_a_night_with_cheap_slots_is_charged_in_the_planned_quarter_hours(
     """Planned at 22:00, written at 02:00, followed, released, written again."""
     _entry, gx = await _setup(hass, dtu_network, tibber, freezer)
 
-    # The plan: 1.0 kWh missing, 0.4637 kWh a slot: the cheapest three
-    # qualifying slots that are worth it (<= 0.78 * 0.40 = 0.312) are
-    # 02:00, 02:15 and 03:30. 02:00 and 02:15 are the 0.10 and 0.11.
+    # The plan at 22:00: 7 kWh above the minimum carry the House (417 W, taken
+    # out divided by e) until about 15:00 on the 5th; the rest of the day is a
+    # shortfall at 0.40. The cheap quarter-hours that are worth it (<= 0.78 *
+    # 0.40 = 0.312) are 02:00, 02:15, 03:30 and 03:45 (the 0.35 one at 04:00 is
+    # not), they hold 4 * 0.525 kWh and do not nearly cover the shortfall.
+    shortfall = DRAIN_SLOTS * LOAD_KWH - 7.0 * ROOT
     assert _value(hass, "sensor", "grid_charging_state") == "waiting"
     assert _value(hass, "binary_sensor", "charging_blocked_by_efficiency") == "off"
     assert float(_value(hass, "sensor", "energy_missing")) == pytest.approx(1.0)
+    assert float(_value(hass, "sensor", "expensive_shortfall")) == pytest.approx(
+        shortfall
+    )
     assert float(_value(hass, "sensor", "energy_to_buy")) == pytest.approx(
-        1.0 / ROOT, abs=1e-6
+        4 * GRID_PER_SLOT
+    )
+    assert float(_value(hass, "sensor", "uncovered_shortfall")) == pytest.approx(
+        shortfall - 4 * GRID_PER_SLOT * 0.78
     )
     assert float(_value(hass, "sensor", "reference_price")) == pytest.approx(0.40)
     next_start = _state(hass, "sensor", "next_charging_start")
@@ -243,6 +280,7 @@ async def test_a_night_with_cheap_slots_is_charged_in_the_planned_quarter_hours(
         "2026-10-05T00:00:00+00:00",
         "2026-10-05T00:15:00+00:00",
         "2026-10-05T01:30:00+00:00",
+        "2026-10-05T01:45:00+00:00",
     ]
     assert _writes(gx) == []
 
@@ -304,6 +342,10 @@ async def test_a_night_with_cheap_slots_is_charged_in_the_planned_quarter_hours(
     assert _writes(gx) == [2200.0, 2300.0, None, 2200.0]
 
 
+CHEAP_PAIR = {"02:00": (0.10, "VERY_CHEAP"), "02:15": (0.11, "VERY_CHEAP")}
+"""Two adjacent cheap quarter-hours: nothing drains the battery between them."""
+
+
 async def test_the_target_reached_releases_the_battery(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
@@ -312,7 +354,9 @@ async def test_the_target_reached_releases_the_battery(
     freezer,
 ) -> None:
     """The battery got full during a planned quarter-hour: release at once."""
-    _entry, gx = await _setup(hass, dtu_network, tibber, freezer, level=99.0)
+    _entry, gx = await _setup(
+        hass, dtu_network, tibber, freezer, level=99.0, prices=CHEAP_PAIR
+    )
     await _settle(hass, freezer, gx, to="2026-10-05T02:00")
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
     gx.charge(level=100.0)
@@ -321,6 +365,28 @@ async def test_the_target_reached_releases_the_battery(
     assert _override(gx) is None
     assert _value(hass, "sensor", "next_charging_start") == "unknown"
     assert float(_value(hass, "sensor", "energy_to_buy")) == 0.0
+    # The shortfall is still there; there is just no room for more energy.
+    assert float(_value(hass, "sensor", "expensive_shortfall")) > 0.0
+
+
+async def test_a_full_battery_waits_for_a_quarter_hour_after_it_has_drained(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """Full at 02:00, but the House uses 0.5 kWh before 03:30: charging goes there."""
+    _entry, gx = await _setup(hass, dtu_network, tibber, freezer, level=99.0)
+    await _settle(hass, freezer, gx, to="2026-10-05T02:00")
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    gx.charge(level=100.0)
+    await hass.async_block_till_done()
+    assert _value(hass, "sensor", "grid_charging_state") == "waiting"
+    assert _override(gx) is None
+    # 02:30 to 03:30: four quarter-hours of 0.104 kWh at the meter leave room.
+    attributes = _state(hass, "sensor", "next_charging_start").attributes
+    assert attributes["slots"][0] == "2026-10-05T01:30:00+00:00"
 
 
 async def test_no_charging_the_charge_target_is_reached_from_below_one_point(
@@ -331,11 +397,263 @@ async def test_no_charging_the_charge_target_is_reached_from_below_one_point(
     freezer,
 ) -> None:
     """A target of 80 % is reached at 80.4 %: the plan ends without waiting."""
-    _entry, gx = await _setup(hass, dtu_network, tibber, freezer, level=78.0)
+    _entry, gx = await _setup(
+        hass, dtu_network, tibber, freezer, level=78.0, prices=CHEAP_PAIR
+    )
     await _call(hass, "number", "set_value", "charge_target", value=80)
     await _settle(hass, freezer, gx, to="2026-10-05T02:00")
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
     gx.charge(level=80.4)  # less than a point from the level planned with
+    await hass.async_block_till_done()
+    assert _value(hass, "sensor", "grid_charging_state") == "target_reached"
+    assert _override(gx) is None
+
+
+# -- the evening of 2026-10-24 ---------------------------------------------
+
+REAL_DAY = (
+    ("00:00", "07:00", 0.05, "VERY_CHEAP"),  # a very cheap night
+    ("07:00", "09:00", 0.02, "CHEAP"),  # cheap right after sunrise
+    ("09:00", "17:00", 0.10, "CHEAP"),
+    ("17:00", "21:00", 0.256, "EXPENSIVE"),  # the expensive evening
+    ("21:00", "24:00", 0.05, "VERY_CHEAP"),
+)
+
+
+def _real_day_prices(tibber: SimTibber) -> None:
+    special = {}
+    for first, last, price, level in REAL_DAY:
+        moment = datetime.fromisoformat(f"2026-10-24T{first}:00")
+        end = (
+            datetime.fromisoformat(f"2026-10-24T{last}:00")
+            if last != "24:00"
+            else (datetime.fromisoformat("2026-10-25T00:00:00"))
+        )
+        while moment < end:
+            special[moment.strftime("%H:%M")] = (price, level)
+            moment += timedelta(minutes=15)
+    tibber.today = _items(date(2026, 10, 24), special)
+    tibber.tomorrow = []
+
+
+async def test_the_evening_is_prepared_for_in_the_cheap_morning(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """01:00, battery at 76 % with the Victron's minimum at 75 %, 300 W round the
+    clock, a very cheap night, the cheapest quarter-hours right after sunrise and
+    an expensive evening (0.256). The old rule needed 0.06 kWh at sunrise and
+    bought nothing; the evening needs 1.2 kWh, 0.1 kWh above the minimum carry
+    0.088 kWh of it."""
+    _entry, gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-24T01:00",
+        level=76.0,
+        active_minimum=75.0,
+        daily_kwh=7.2,
+        price_setup=_real_day_prices,
+    )
+    shortfall = 4 * 0.3 - 0.1 * ROOT
+    assert _value(hass, "binary_sensor", "discharge_block") == "on"
+    assert float(_value(hass, "sensor", "expensive_shortfall")) == pytest.approx(
+        shortfall
+    )
+    assert float(_value(hass, "sensor", "uncovered_shortfall")) == pytest.approx(0.0)
+    assert float(_value(hass, "sensor", "energy_to_buy")) == pytest.approx(
+        shortfall / 0.78
+    )
+    assert float(_value(hass, "sensor", "reference_price")) == pytest.approx(0.256)
+    assert float(_value(hass, "sensor", "battery_at_sunrise")) == pytest.approx(0.1)
+    assert _value(hass, "sensor", "grid_charging_state") == "waiting"
+    # Bought in the cheapest quarter-hours (08:15 to 08:45 local, 0.02), not at
+    # night (0.05), the later ones first.
+    next_start = _state(hass, "sensor", "next_charging_start")
+    assert next_start.state == "2026-10-24T06:15:00+00:00"
+    assert next_start.attributes["slots"] == [
+        "2026-10-24T06:15:00+00:00",
+        "2026-10-24T06:30:00+00:00",
+        "2026-10-24T06:45:00+00:00",
+    ]
+    assert _writes(gx) == []
+
+    # The night passes without a write.
+    await _settle(hass, freezer, gx, to="2026-10-24T06:00")
+    assert _writes(gx) == []
+
+    # 08:15: the first planned quarter-hour; the setpoint override is written.
+    await _settle(hass, freezer, gx, to="2026-10-24T08:15")
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _writes(gx) == [2200.0]
+
+    # The first quarter-hour was planned for 0.375 kWh from the grid: 0.33 kWh
+    # stored, 3.3 points. The later quarter-hours are full (0.4637 kWh, 4.6
+    # points), and the plan never needs more.
+    await _settle(hass, freezer, gx, to="2026-10-24T08:30")
+    _grid(hass, 2200)  # the House imports its load and the battery's charge
+    gx.charge(level=79.3, power=2100.0)
+    await hass.async_block_till_done()
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    await _settle(hass, freezer, gx, to="2026-10-24T08:45")
+    gx.charge(level=83.9)
+    await hass.async_block_till_done()
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _writes(gx) == [2200.0]
+
+    # 09:00: 89 % is 1.4 kWh above the minimum, enough for the evening.
+    await _settle(hass, freezer, gx, to="2026-10-24T09:00")
+    _grid(hass, 100)
+    gx.charge(level=89.0, power=0.0)
+    await hass.async_block_till_done()
+    assert _value(hass, "sensor", "grid_charging_state") == "no_shortfall"
+    assert float(_value(hass, "sensor", "expensive_shortfall")) == 0.0
+    assert float(_value(hass, "sensor", "energy_to_buy")) == 0.0
+    assert _value(hass, "sensor", "reference_price") == "unknown"
+    assert _writes(gx) == [2200.0, None]
+
+
+async def test_the_night_is_used_when_the_morning_is_not_cheaper(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """The same day with the morning dearer than the night: charging is at night."""
+
+    def prices(tibber: SimTibber) -> None:
+        _real_day_prices(tibber)
+        for item in tibber.today:
+            if "T07:" in item["startsAt"] or "T08:" in item["startsAt"]:
+                item["total"], item["level"] = 0.12, "CHEAP"
+
+    _entry, _gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-24T01:00",
+        level=76.0,
+        active_minimum=75.0,
+        daily_kwh=7.2,
+        price_setup=prices,
+    )
+    slots = _state(hass, "sensor", "next_charging_start").attributes["slots"]
+    # 0.05 at night is the cheapest: the latest night quarter-hours go first.
+    assert slots == [
+        "2026-10-24T04:15:00+00:00",
+        "2026-10-24T04:30:00+00:00",
+        "2026-10-24T04:45:00+00:00",
+    ]
+
+
+# -- the running quarter-hour keeps its place ---------------------------------
+
+THREE_CHEAP = {f"02:{m:02d}": (0.10, "VERY_CHEAP") for m in (0, 15, 30)}
+"""Equal prices: without care every replan would move the charging to 02:30."""
+NEED_LEVEL = 38.76
+"""At 02:15 with 100 W, 0.6 kWh from the grid are needed."""
+
+
+async def _minutes(hass, freezer, gx, entry, count: int, level: float) -> float:
+    """Charge for ``count`` minutes, replanning every minute; the level it reaches."""
+    for _ in range(count):
+        level += 0.309  # 2100 W for a minute: 0.035 kWh * e stored, in points
+        gx.charge(level=level, power=2100.0)
+        await _settle(hass, freezer, gx, seconds=60)
+        _house(entry).grid_charging._replan()
+        await hass.async_block_till_done()
+    return level
+
+
+async def test_a_replan_every_minute_keeps_the_running_quarter_hour(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    entry, gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-05T02:15",
+        level=NEED_LEVEL,
+        daily_kwh=2.4,
+        prices=THREE_CHEAP,
+    )
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _writes(gx) == [2200.0]
+    _grid(hass, 2200)
+    level = await _minutes(hass, freezer, gx, entry, 14, NEED_LEVEL)
+    assert level > NEED_LEVEL + 4.0
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _writes(gx) == [2200.0]  # written once, never released
+
+
+async def test_a_cheaper_later_quarter_hour_waits_for_the_running_one_to_end(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    prices = {
+        "02:00": (0.12, "VERY_CHEAP"),
+        "02:15": (0.12, "VERY_CHEAP"),
+        "02:30": (0.10, "VERY_CHEAP"),
+    }
+    entry, gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-05T02:15",
+        level=NEED_LEVEL,
+        daily_kwh=2.4,
+        prices=prices,
+    )
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    _grid(hass, 2200)
+    level = await _minutes(hass, freezer, gx, entry, 14, NEED_LEVEL)
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert _writes(gx) == [2200.0]
+    # the quarter-hour ends: the cheaper 02:30 takes over what is left
+    await _settle(hass, freezer, gx, to="2026-10-05T02:30")
+    gx.charge(level=level + 0.5)
+    await hass.async_block_till_done()
+    assert _state(hass, "sensor", "next_charging_start").state == (
+        "2026-10-05T00:30:00+00:00"
+    )
+    assert _writes(gx)[0] == 2200.0
+
+
+async def test_reaching_the_target_inside_the_running_quarter_hour_ends_charging(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    _entry, gx = await _setup(
+        hass,
+        dtu_network,
+        tibber,
+        freezer,
+        at="2026-10-05T02:15",
+        level=NEED_LEVEL,
+        daily_kwh=7.2,
+        prices=THREE_CHEAP,
+    )
+    await _call(hass, "number", "set_value", "charge_target", value=40)
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    gx.charge(level=40.1)
     await hass.async_block_till_done()
     assert _value(hass, "sensor", "grid_charging_state") == "target_reached"
     assert _override(gx) is None
@@ -401,6 +719,9 @@ async def test_ignoring_the_efficiency_charges_the_same_night(
     assert _value(hass, "switch", "ignore_efficiency") == "on"
     assert _value(hass, "sensor", "grid_charging_state") == "waiting"
     assert _value(hass, "binary_sensor", "charging_blocked_by_efficiency") == "off"
+    # All four quarter-hours cost the same; the later ones are preferred, since
+    # energy bought later is stored for less time. The plan of 22:00 has all
+    # four; at 02:00 the first is the one running, so it keeps its place.
     await _settle(hass, freezer, gx, to="2026-10-05T02:00")
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
     assert _writes(gx) == [2200.0]
@@ -435,6 +756,7 @@ async def test_no_qualifying_quarter_hour_is_not_the_efficiency(
     _entry, _gx = await _setup(hass, dtu_network, tibber, freezer, prices={})
     assert _value(hass, "sensor", "grid_charging_state") == "no_qualifying_slot"
     assert _value(hass, "binary_sensor", "charging_blocked_by_efficiency") == "off"
+    assert float(_value(hass, "sensor", "uncovered_shortfall")) > 0.0
     await _call(
         hass,
         "select",
@@ -442,9 +764,11 @@ async def test_no_qualifying_quarter_hour_is_not_the_efficiency(
         "charge_price_levels",
         option="normal_and_below",
     )
-    # Nothing is left to compare with, so the test is skipped; 22:00 qualifies.
+    # Now every quarter-hour qualifies, so the House never has to buy at a price
+    # it cannot choose: there is no shortfall and nothing to compare with.
     assert _value(hass, "sensor", "reference_price") == "unknown"
-    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    assert float(_value(hass, "sensor", "expensive_shortfall")) == 0.0
+    assert _value(hass, "sensor", "grid_charging_state") == "no_shortfall"
 
 
 # -- the price levels ------------------------------------------------------
@@ -459,11 +783,11 @@ async def test_the_price_level_choice_decides_which_slots_qualify(
 ) -> None:
     """Very cheap only: 02:00, 02:15, 03:30 (and no CHEAP 03:45)."""
     entry, _gx = await _setup(hass, dtu_network, tibber, freezer, level=70.0)
-    # 3.0 kWh missing: seven slots at 0.4637; the cheap and very cheap slots
-    # that are worth it are 02:00, 02:15, 03:30, 03:45: not enough.
+    # The cheap and very cheap slots that are worth it are 02:00, 02:15, 03:30,
+    # 03:45: they hold 2.1 kWh, the shortfall is far more.
     plan = _house(entry).grid_charging.plan
     assert len(plan.slots) == 4
-    assert not plan.reachable
+    assert plan.uncovered > 0.0
     await _call(
         hass, "select", "select_option", "charge_price_levels", option="very_cheap"
     )
@@ -475,17 +799,19 @@ async def test_the_price_level_choice_decides_which_slots_qualify(
     ]
 
 
-# -- the deadline ----------------------------------------------------------
+# -- the horizon -----------------------------------------------------------
 
 
-async def test_nothing_at_or_after_sunrise_is_planned(
+async def test_the_plan_is_not_bound_by_sunrise(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
     tibber: SimTibber,
     mqtt_mock: MagicMock,
     freezer,
 ) -> None:
-    """The cheapest slots of all are after sunrise; they are not planned."""
+    """The cheapest slots of all are after sunrise: they are planned, for the
+    shortfall that comes after them (the evening), and the nights' are kept for
+    what comes before them."""
     after_sunrise = {
         f"{h:02d}:{m:02d}": (0.01, "VERY_CHEAP")
         for h in range(7, 12)
@@ -496,7 +822,7 @@ async def test_nothing_at_or_after_sunrise_is_planned(
         dtu_network,
         tibber,
         freezer,
-        level=0.0,
+        level=20.0,
         prices={**NIGHT_PRICES, **after_sunrise},
     )
     house = _house(entry)
@@ -508,11 +834,20 @@ async def test_nothing_at_or_after_sunrise_is_planned(
         < datetime(2026, 10, 5, 5, 25, tzinfo=UTC)
     )
     plan = house.grid_charging.plan
-    assert plan.slots
-    assert all(s.start < sunrise for s in plan.slots)
+    after = [s for s in plan.slots if s.start >= sunrise]
+    before = [s for s in plan.slots if s.start < sunrise]
+    # Level 20 % is the minimum: nothing is usable. The 16 quarter-hours until
+    # 02:00 have no cheap quarter-hour before them (uncovered). The shortfall
+    # from 04:15 to sunrise is covered by the night, the day after 12:00 by
+    # the 0.01 quarter-hours at the end of the morning (latest first).
+    assert len(before) == 4
+    assert len(after) == 13
+    assert {s.price for s in after} == {0.01}
+    assert max(s.start for s in after) == datetime(2026, 10, 5, 9, 45, tzinfo=UTC)
+    assert plan.uncovered == pytest.approx(16 * LOAD_KWH)
     attributes = _state(hass, "sensor", "next_charging_start").attributes
     assert len(attributes["slots"]) <= 96
-    assert all(datetime.fromisoformat(s) < sunrise for s in attributes["slots"])
+    assert attributes["slots"] == sorted(attributes["slots"])
 
 
 # -- safety ----------------------------------------------------------------
@@ -907,7 +1242,8 @@ async def test_the_charging_device_sits_below_the_house(
             "reference_price",
             "use_forecast",
             "forecast_share",
-            "energy_needed_at_sunrise",
+            "expensive_shortfall",
+            "uncovered_shortfall",
             "battery_at_sunrise",
             "forecast_surplus",
             "forecast_in_use",
@@ -928,11 +1264,37 @@ async def test_the_charging_device_sits_below_the_house(
         "sensor.home_reference_price",
         "switch.home_use_forecast",
         "number.home_forecast_share",
-        "sensor.home_energy_needed_at_sunrise",
+        "sensor.home_expensive_shortfall",
+        "sensor.home_uncovered_shortfall",
         "sensor.home_battery_at_sunrise",
         "sensor.home_forecast_surplus",
         "binary_sensor.home_forecast_in_use",
     }
+
+
+async def test_the_retired_sensor_is_removed_from_the_registry(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """The sensor of the old rule is gone after the update, not left unavailable."""
+    entry, _gx = await _setup(hass, dtu_network, tibber, freezer)
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "sensor",
+        DOMAIN,
+        "house-home_energy_needed_at_sunrise",
+        config_entry=entry,
+        suggested_object_id="home_energy_needed_at_sunrise",
+    )
+    assert registry.async_get("sensor.home_energy_needed_at_sunrise") is not None
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert registry.async_get("sensor.home_energy_needed_at_sunrise") is None
+    assert hass.states.get("sensor.home_energy_needed_at_sunrise") is None
+    assert hass.states.get("sensor.home_expensive_shortfall") is not None
 
 
 async def test_the_charging_device_is_named_in_german(

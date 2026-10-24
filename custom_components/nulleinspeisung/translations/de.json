@@ -315,6 +315,7 @@
           "battery_unavailable": "Batterie nicht verfügbar",
           "dynamic_ess_active": "Dynamic ESS aktiv",
           "no_prices": "Keine Preise",
+          "no_shortfall": "Kein Engpass",
           "target_reached": "Ziel erreicht",
           "no_qualifying_slot": "Keine passende Viertelstunde",
           "blocked_by_efficiency": "Durch Wirkungsgrad blockiert",
@@ -334,8 +335,11 @@
       "reference_price": {
         "name": "Referenzpreis"
       },
-      "energy_needed_at_sunrise": {
-        "name": "Energiebedarf bei Sonnenaufgang"
+      "expensive_shortfall": {
+        "name": "Engpass in teuren Zeiten"
+      },
+      "uncovered_shortfall": {
+        "name": "Nicht gedeckter Engpass"
       },
       "battery_at_sunrise": {
         "name": "Batterie bei Sonnenaufgang"

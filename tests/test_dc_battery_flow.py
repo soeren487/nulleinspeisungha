@@ -4,9 +4,9 @@ and the Charging Plan that counts on it.
 The recording tests use a House with a PV Inverter (OMA, 200 W) and a
 Battery-backed Inverter (BUERO4, 300 W). The planning tests are the House of
 ``test_forecast_charging_flow``: Berlin, 22:00 on 4 October 2026, a 10 kWh AC
-Battery at 10 %, 100 W of Expected Load, a usable and sunny PV Forecast, five
-Discharge Blocks; BUERO4 is Battery-backed with two DC Batteries of 1.6 kWh
-(together) and a recorded night output of 300 W from 21:00 to 06:00.
+Battery at 10 %, 100 W of Expected Load, a usable but dull PV Forecast (no PV is
+counted), five Discharge Blocks; BUERO4 is Battery-backed with two DC Batteries
+of 1.6 kWh (together) and a recorded night output of 300 W from 21:00 to 06:00.
 """
 
 from __future__ import annotations
@@ -21,7 +21,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-from custom_components.nulleinspeisung import solar
 from custom_components.nulleinspeisung.const import DOMAIN
 from tests.conftest import (
     HOME_1,
@@ -244,6 +243,7 @@ async def _setup(
     configured: bool = True,
     level: float = 10.0,
     night: dict[str, list[tuple[datetime, float]]] | None = None,
+    dull: bool = True,
 ):
     """Set up at 22:00. ``sensors`` maps an entity id to (state, unit), or ``None``
     for a sensor that does not exist; the default is two full DC Batteries.
@@ -251,6 +251,8 @@ async def _setup(
     await hass.config.async_set_time_zone("Europe/Berlin")
     freezer.move_to(NOW)
     _prices(tibber, tomorrow=NIGHT_PRICES)
+    if dull:
+        open_meteo.irradiance[:] = [0.0] * len(open_meteo.irradiance)
     seed_history(hass_storage, "house-home", prepared_history(14))
     seed_dc_output_history(
         hass_storage, "house-home", night if night is not None else _night_history()
@@ -303,29 +305,20 @@ def _kwh(hass: HomeAssistant, key: str) -> float:
     return float(_value(hass, "sensor", key))
 
 
-def _hours_to_sunrise() -> float:
-    deadline = solar.next_sunrise(52.5, 13.4, NOW)
-    return (deadline - NOW).total_seconds() / 3600.0
-
-
 def _plan(hass: HomeAssistant) -> tuple[float, float]:
-    """The energy missing and the energy to buy."""
-    return _kwh(hass, "energy_missing"), _kwh(hass, "energy_to_buy")
+    """The shortfall and the energy to buy."""
+    return _kwh(hass, "expensive_shortfall"), _kwh(hass, "energy_to_buy")
 
 
-def _content_without_support(level: float = 10.0) -> float:
-    hours = _hours_to_sunrise() - BLOCK_HOURS
-    return max(10.0 * level / 100.0 - 100.0 * hours / 1000.0 / ROOT, 0.0)
+def _shortfall_without_support(level: float = 10.0) -> float:
+    """99 quarter-hours of 100 W at the meter minus what the battery delivers."""
+    return 99 * 0.025 - 10.0 * level / 100.0 * ROOT
 
 
-def _content_with_support(level: float = 10.0) -> float:
-    """1.6 kWh * 0.85 at 300 W: 4 h and 18 quarters of the night up to 02:30 are
-    covered. None of them is a Discharge Block but 02:00 and 02:15; 02:30 gets
-    the remaining 0.01 kWh.
-    """
-    hours = _hours_to_sunrise() - BLOCK_HOURS
-    drain = (100.0 * (hours - 4.0) - 10.0) / 1000.0 / ROOT
-    return max(10.0 * level / 100.0 - drain, 0.0)
+def _content_at_sunrise_without_support(to_buy: float, level: float = 10.0) -> float:
+    """The battery's content at sunrise (07:15): the night's load of 32 quarter-hours
+    taken out, what is bought before sunrise put in."""
+    return 10.0 * level / 100.0 - 32 * 0.025 / ROOT + to_buy * ROOT
 
 
 async def test_full_dc_batteries_make_the_plan_buy_less(
@@ -337,7 +330,12 @@ async def test_full_dc_batteries_make_the_plan_buy_less(
     mqtt_mock: MagicMock,
     freezer,
 ) -> None:
-    """Empty DC Batteries: the plan of before. Full ones: the night is covered."""
+    """Empty DC Batteries: the plan of a House without. Full ones: the night is covered.
+
+    1.36 kWh of support at 300 W run 18 quarter-hours from 22:00 (to 02:30, the
+    last with 0.01 kWh). The House uses only 100 W of it, and the surplus of 200 W
+    charges the AC Battery (0.05 kWh a quarter-hour at the meter, times e).
+    """
     await _setup(
         hass,
         dtu_network,
@@ -347,35 +345,31 @@ async def test_full_dc_batteries_make_the_plan_buy_less(
         freezer,
         sensors={SENSORS[0]: ("0", "Wh"), SENSORS[1]: ("0", "Wh")},
     )
-    needed = _kwh(hass, "energy_needed_at_sunrise")
-    assert needed == pytest.approx(0.7177, abs=1e-3)
     empty = _plan(hass)
+    assert empty[0] == pytest.approx(_shortfall_without_support(), abs=1e-3)
+    assert empty[1] == pytest.approx(empty[0] / 0.78, abs=1e-3)
     assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        _content_without_support(), abs=1e-3
+        _content_at_sunrise_without_support(empty[1]), abs=1e-3
     )
-    assert empty[0] == pytest.approx(needed - _content_without_support(), abs=1e-3)
-    assert empty[1] == pytest.approx(empty[0] / ROOT, abs=1e-3)
     assert _kwh(hass, "dc_battery_support") == 0.0
 
     hass.states.async_set(SENSORS[0], "800", {"unit_of_measurement": "Wh"})
     hass.states.async_set(SENSORS[1], "0.8", {"unit_of_measurement": "kWh"})
     await hass.async_block_till_done()
     full = _plan(hass)
-    assert _kwh(hass, "energy_needed_at_sunrise") == pytest.approx(needed)
-    assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        _content_with_support(), abs=1e-3
-    )
     assert _kwh(hass, "dc_battery_support") == pytest.approx(1.36, abs=1e-3)
     assert _kwh(hass, "dc_battery_energy") == pytest.approx(1.6)
-    assert full[0] == pytest.approx(needed - _content_with_support(), abs=1e-3)
-    assert full[1] == pytest.approx(full[0] / ROOT, abs=1e-3)
-    # the figures of the worked example: 0.095 kWh in the battery at sunrise become
-    # 0.559 kWh, and the energy bought falls from 0.705 to 0.179 kWh
-    assert _kwh(hass, "battery_at_sunrise") == pytest.approx(0.559, abs=1e-3)
-    assert empty[1] == pytest.approx(0.705, abs=1e-3)
-    assert full[1] == pytest.approx(0.179, abs=1e-3)
+    # 1.0 kWh + 18 * 0.05 * e - 0.015 / e leave 1.778 kWh at 02:30; 82
+    # quarter-hours of 0.025 kWh remain, which 1.778 * e = 1.570 kWh do not cover.
+    content = 1.0 + 18 * 0.05 * ROOT - 0.015 / ROOT
+    assert full[0] == pytest.approx(82 * 0.025 - content * ROOT, abs=1e-3)
+    assert full[0] == pytest.approx(0.480, abs=1e-3)
     assert full[0] < empty[0]
     assert full[1] < empty[1]
+    # the support lifts what the battery holds at sunrise
+    assert _kwh(hass, "battery_at_sunrise") > _content_at_sunrise_without_support(
+        full[1]
+    )
 
 
 async def test_an_unavailable_sensor_counts_as_empty(
@@ -430,9 +424,7 @@ async def test_a_sensor_that_does_not_exist_counts_as_empty(
         freezer,
         sensors={SENSORS[0]: None, SENSORS[1]: None},
     )
-    assert _plan(hass)[0] == pytest.approx(
-        _kwh(hass, "energy_needed_at_sunrise") - _content_without_support(), abs=1e-3
-    )
+    assert _plan(hass)[0] == pytest.approx(_shortfall_without_support(), abs=1e-3)
     assert _value(hass, "sensor", "dc_battery_energy") == "unknown"
 
 
@@ -449,8 +441,10 @@ async def test_without_any_history_there_is_no_support(
     await _setup(hass, dtu_network, tibber, open_meteo, hass_storage, freezer, night={})
     assert _kwh(hass, "dc_battery_energy") == pytest.approx(1.6)
     assert _kwh(hass, "dc_battery_support") == 0.0
+    shortfall, to_buy = _plan(hass)
+    assert shortfall == pytest.approx(_shortfall_without_support(), abs=1e-3)
     assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        _content_without_support(), abs=1e-3
+        _content_at_sunrise_without_support(to_buy), abs=1e-3
     )
 
 
@@ -463,19 +457,18 @@ async def test_a_house_without_sensors_plans_as_before(
     mqtt_mock: MagicMock,
     freezer,
 ) -> None:
-    """Same House, no sensors named: the numbers of ``test_forecast_charging_flow``."""
+    """Same House, no sensors named: the numbers of a House without support."""
     _entry, house = await _setup(
         hass, dtu_network, tibber, open_meteo, hass_storage, freezer, configured=False
     )
     assert house.config.dc_batteries == {}
     assert house.grid_charging.dc_support is None
-    assert _kwh(hass, "energy_needed_at_sunrise") == pytest.approx(0.7177, abs=1e-3)
+    shortfall, to_buy = _plan(hass)
+    assert shortfall == pytest.approx(_shortfall_without_support(), abs=1e-3)
+    assert to_buy == pytest.approx(shortfall / 0.78, abs=1e-3)
     assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        _content_without_support(), abs=1e-3
+        _content_at_sunrise_without_support(to_buy), abs=1e-3
     )
-    missing, to_buy = _plan(hass)
-    assert missing == pytest.approx(0.7177 - _content_without_support(), abs=1e-3)
-    assert to_buy == pytest.approx(missing / ROOT, abs=1e-3)
     registry = er.async_get(hass)
     for key in ("dc_battery_energy", "dc_battery_support"):
         assert (
