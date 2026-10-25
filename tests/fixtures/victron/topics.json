@@ -139,6 +139,7 @@
   "system/0/Dc/Battery/TimeToGo": "{\"value\":null}",
   "system/0/Dc/Battery/Voltage": "{\"value\":53.099998474121094}",
   "system/0/Dc/Battery/VoltageService": "{\"value\":\"com.victronenergy.battery.socketcan_can0\"}",
+  "system/0/Dc/Vebus/Power": "{\"value\":-110}",
   "system/0/Serial": "{\"value\":\"c0ffee000001\"}",
   "system/0/SystemState/BatteryLife": "{\"value\":0}",
   "system/0/SystemState/ChargeDisabled": "{\"value\":0}",

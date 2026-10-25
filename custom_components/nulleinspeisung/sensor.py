@@ -445,11 +445,17 @@ class BatterySensor(HouseEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, str] | None:
-        """For the minimum charge level: whether it is the active or configured one."""
+        """Where the value comes from, for the minimum charge level and the power."""
         state = self.house.battery
-        if self.entity_description.key != "battery_minimum_soc" or state is None:
+        if state is None:
             return None
-        source = minimum_floor(state)[1]
+        key = self.entity_description.key
+        if key == "battery_power":
+            source = state.power_source
+        elif key == "battery_minimum_soc":
+            source = minimum_floor(state)[1]
+        else:
+            return None
         return {"source": source} if source else None
 
     @property

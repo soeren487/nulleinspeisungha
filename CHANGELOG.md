@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The battery power no longer flutters.** The House read the AC Battery's power from `system/0/Dc/Battery/Power`, which the GX takes from the battery monitor (the BMS). Its current has a resolution of about 1 A plus a few amperes of noise, so the power jumped by 50 to 200 W every second while the inverter/charger was idle and by up to 2.5 kW while it charged, although the grid stayed steady. The battery power sensor, the House's consumption and the power flow fluttered with it, and Curtailment, which counts a discharging battery as import, read the noise as well. The House now reads the power the inverter/charger moves into or out of the battery (`system/0/Dc/Vebus/Power`) and falls back to the battery monitor's value only while the GX publishes none. The battery power sensor has an attribute `source` (`inverter` or `battery_monitor`) that says which one is in use.
+
+### Good to know
+
+- Energy helpers built on the battery power sensor (for example a Riemann sum integration) will look calmer. Their history stays as it was.
+- The inverter/charger's value leaves out small DC loads such as the GX itself (a few watts).
+- The sign is the same as before: positive while the battery charges.
+- Restart Home Assistant after updating.
+
 ## 0.10.0
 
 ### Added

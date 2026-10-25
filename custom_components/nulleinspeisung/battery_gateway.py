@@ -49,7 +49,8 @@ _MAX_CHARGE_CURRENT = re.compile(r"^battery/([^/]+)/Info/MaxChargeCurrent$")
 
 _PATH_FIELDS = {
     "system/0/Dc/Battery/Soc": "charge_level",
-    "system/0/Dc/Battery/Power": "power",
+    "system/0/Dc/Battery/Power": "battery_monitor_power",
+    "system/0/Dc/Vebus/Power": "inverter_power",
     "system/0/Dc/Battery/Voltage": "voltage",
     "settings/0/Settings/CGwacs/AcPowerSetPoint": "grid_setpoint",
     "settings/0/Settings/DynamicEss/Mode": "dynamic_ess_mode",
@@ -181,8 +182,16 @@ class BatteryState:
 
     charge_level: float | None = None
     """State of charge in percent."""
-    power: float | None = None
-    """Battery power in W, positive while charging."""
+    battery_monitor_power: float | None = None
+    """Battery power in W from the battery monitor, positive while charging.
+
+    Coarse and noisy: the BMS's current has a resolution of about 1 A.
+    """
+    inverter_power: float | None = None
+    """Battery power in W from the inverter/charger, positive while charging.
+
+    Smooth; leaves out small DC loads such as the GX itself.
+    """
     voltage: float | None = None
     """Battery voltage in V."""
     charge_current_limit: float | None = None
@@ -203,6 +212,26 @@ class BatteryState:
     """Whether the GX's broker is connected."""
     fresh: bool = False
     """Connected and a message of the GX arrived within the last 60 s."""
+
+    @property
+    def power(self) -> float | None:
+        """Battery power in W, positive while charging.
+
+        The inverter/charger's value when the GX publishes it, else the battery
+        monitor's.
+        """
+        if self.inverter_power is not None:
+            return self.inverter_power
+        return self.battery_monitor_power
+
+    @property
+    def power_source(self) -> str | None:
+        """Where ``power`` comes from: ``"inverter"`` or ``"battery_monitor"``."""
+        if self.inverter_power is not None:
+            return "inverter"
+        if self.battery_monitor_power is not None:
+            return "battery_monitor"
+        return None
 
 
 def minimum_floor(state: BatteryState) -> tuple[float, str | None]:

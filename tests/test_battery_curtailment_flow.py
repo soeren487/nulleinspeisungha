@@ -47,6 +47,14 @@ def _state(hass: HomeAssistant, platform: str, key: str, house: str = "home") ->
     return state.state
 
 
+def _state_attributes(
+    hass: HomeAssistant, key: str, house: str = "home"
+) -> dict[str, object]:
+    state = hass.states.get(_entity(hass, "sensor", key, house))
+    assert state is not None
+    return dict(state.attributes)
+
+
 def _grid(hass: HomeAssistant, watts: float) -> None:
     hass.states.async_set(METER, str(watts), {"unit_of_measurement": "W"})
 
@@ -444,6 +452,28 @@ async def test_consumption_matches_the_formula(
     assert float(_state(hass, "sensor", "consumption")) == 1200.0
 
 
+async def test_a_fluttering_battery_monitor_does_not_reach_the_house(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
+) -> None:
+    """The inverter/charger's steady 0 W counts, not the monitor's +-100 W."""
+    gx = SimGx()
+    gx.charge(level=80.0, power=0.0)
+    await _home(hass, dtu_network, gx, grid=300)
+    for noise in (-150.0, 100.0, -150.0, 100.0):
+        gx.charge(monitor_power=noise)
+        await hass.async_block_till_done()
+        # 300 W import + 1000 W produced, whatever the battery monitor says
+        assert float(_state(hass, "sensor", "consumption")) == 1300.0
+        assert float(_state(hass, "sensor", "battery_power")) == 0.0
+        assert _state_attributes(hass, "battery_power")["source"] == "inverter"
+    # Without the inverter/charger's value the monitor's counts again.
+    gx.set("system/0/Dc/Vebus/Power", None)
+    await hass.async_block_till_done()
+    assert float(_state(hass, "sensor", "battery_power")) == 100.0
+    assert _state_attributes(hass, "battery_power")["source"] == "battery_monitor"
+    assert float(_state(hass, "sensor", "consumption")) == 1200.0
+
+
 async def test_consumption_of_a_house_without_a_battery(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
@@ -459,7 +489,7 @@ async def test_entities_show_the_recorded_values(
     gx = SimGx()
     await _home(hass, dtu_network, gx)
     assert _state(hass, "sensor", "battery_soc") == "82.0"
-    assert _state(hass, "sensor", "battery_power") == "-116.0"
+    assert _state(hass, "sensor", "battery_power") == "-110.0"
     # Discharging counts as zero charge: 2100 W - 100 W margin.
     assert _state(hass, "sensor", "battery_headroom") == "2000.0"
     assert _state(hass, "binary_sensor", "battery_connected") == "on"
