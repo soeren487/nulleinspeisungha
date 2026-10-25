@@ -205,6 +205,6 @@ Captured over 25 s with the battery held by a Discharge Block and the house draw
 | `vebus/<n>/Ac/ActiveIn/P` | 6 W | 1 W |
 | `system/0/Ac/Consumption/L1/Power` | 547 W | 4 W |
 
-The inverter/charger's own DC power (`system/0/Dc/Vebus/Power`) is the smooth value of what the MultiPlus moves into or out of the battery; it leaves out the small DC loads such as the GX itself. Its sign is expected to follow Victron's battery convention (positive while charging); this still has to be confirmed while the battery charges.[^power-reading]
+The inverter/charger's own DC power (`system/0/Dc/Vebus/Power`) is the smooth value of what the MultiPlus moves into or out of the battery; it leaves out the small DC loads such as the GX itself. Its sign follows Victron's battery convention: positive while charging, negative while discharging (confirmed by the owner on the GX on 2026-10-25).[^power-reading]
 
 [^power-reading]: Battery power topics compared on an idle MultiPlus-II GX
