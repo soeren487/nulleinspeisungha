@@ -6,7 +6,7 @@ The MultiPlus reports what it moves into or out of the battery itself in `system
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 Decisions taken in planning:
 
@@ -18,8 +18,10 @@ Decisions taken in planning:
 - [x] Without it, the battery monitor's value is used, as before
 - [x] The battery power sensor shows which source is in use
 - [x] Curtailment, consumption and grid charging use the new value
-- [ ] The sign is confirmed on the real system before the release
+- [x] The sign is confirmed on the real system before the release
 
 ## Comments
 
 2026-10-25: Implemented on branch `ticket-35-inverter-dc-power`; 940 tests pass on the pinned Home Assistant and on 2026.9.4, linters clean. Open: the sign of `system/0/Dc/Vebus/Power` while charging, to be checked on the real GX before the release.
+
+2026-10-25: The owner confirmed on the GX that `system/0/Dc/Vebus/Power` is positive while charging and negative while discharging.
