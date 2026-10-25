@@ -10,6 +10,9 @@ sources:
   - id: ess-batterylife
     resource: https://www.victronenergy.com/media/pg/Energy_Storage_System/en/controlling-depth-of-discharge.html
     title: Victron ESS manual, controlling depth of discharge (BatteryLife), and the configuration page
+  - id: power-reading
+    resource: read-only MQTT capture on the owner's GX, 2026-10-25 02:30
+    title: Battery power topics compared on an idle MultiPlus-II GX
   - id: own-test
     resource: test on the owner's installation, 2026-10-06
     title: Override test on a MultiPlus-II GX with Venus OS v3.67
@@ -187,3 +190,21 @@ Consequence for this integration: Grid Charging buys only what covers expensive 
 [^interview]: Requirements decisions
 [^own-test]: Override test on a MultiPlus-II GX with Venus OS v3.67
 [^ess-batterylife]: Victron ESS manual, controlling depth of discharge (BatteryLife), and the configuration page
+
+# Which battery power to read
+
+`system/0/Dc/Battery/Power` comes from the battery monitor (here the BMS, `battery/<n>/Dc/0/Power`). On the owner's system its current has a resolution of about 1 A with noise of a few amperes, so at about 50 V the power jumps by 50 to 200 W from second to second while the inverter/charger is idle, and by up to 2.5 kW while it charges or discharges, with the AC side steady.[^power-reading]
+
+Captured over 25 s with the battery held by a Discharge Block and the house drawing about 550 W from the grid:[^power-reading]
+
+| Topic | Mean | Standard deviation |
+| --- | --- | --- |
+| `system/0/Dc/Battery/Power` (battery monitor) | -44 W | 90 W |
+| `system/0/Dc/Vebus/Power` (inverter/charger DC side) | 2 W | 1 W |
+| `vebus/<n>/Dc/0/Power` | 2 W | 1 W |
+| `vebus/<n>/Ac/ActiveIn/P` | 6 W | 1 W |
+| `system/0/Ac/Consumption/L1/Power` | 547 W | 4 W |
+
+The inverter/charger's own DC power (`system/0/Dc/Vebus/Power`) is the smooth value of what the MultiPlus moves into or out of the battery; it leaves out the small DC loads such as the GX itself. Its sign is expected to follow Victron's battery convention (positive while charging); this still has to be confirmed while the battery charges.[^power-reading]
+
+[^power-reading]: Battery power topics compared on an idle MultiPlus-II GX
