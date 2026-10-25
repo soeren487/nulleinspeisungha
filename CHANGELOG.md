@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
 ### Added
 
@@ -10,6 +10,7 @@
 ### Good to know
 
 - With the default of 50 % the House may charge somewhat earlier, and buy a little more, than before on days that turn out sunny. Set the buffer to 0 % to keep the sun's room as large as possible.
+- Restart Home Assistant after updating.
 
 ## 0.9.0
 
