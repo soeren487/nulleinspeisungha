@@ -1063,11 +1063,24 @@ class SimGx:
         power: float | None = None,
         voltage: float | None = None,
         current_limit: float | None = None,
+        monitor_power: float | None = None,
+        inverter_power: float | None = None,
     ) -> None:
-        """Set the battery values that are given."""
+        """Set the battery values that are given.
+
+        ``power`` goes to both the battery monitor and the inverter/charger;
+        ``monitor_power`` and ``inverter_power`` set only one of them.
+        """
         for path, value in (
             ("system/0/Dc/Battery/Soc", level),
-            ("system/0/Dc/Battery/Power", power),
+            (
+                "system/0/Dc/Battery/Power",
+                power if monitor_power is None else monitor_power,
+            ),
+            (
+                "system/0/Dc/Vebus/Power",
+                power if inverter_power is None else inverter_power,
+            ),
             ("system/0/Dc/Battery/Voltage", voltage),
             ("battery/512/Info/MaxChargeCurrent", current_limit),
         ):

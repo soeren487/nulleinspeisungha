@@ -45,7 +45,8 @@ async def test_portal_id_is_discovered_and_values_are_read(hass: HomeAssistant) 
     state = gateway.state
     assert state == BatteryState(
         charge_level=82.0,
-        power=-116.0,
+        battery_monitor_power=-116.0,
+        inverter_power=-110.0,
         voltage=pytest.approx(53.1, abs=0.01),
         charge_current_limit=100.0,
         grid_setpoint=0.0,
@@ -73,7 +74,7 @@ async def test_changes_arrive_and_listeners_are_told(hass: HomeAssistant) -> Non
     gateway = await _start(hass, gx)
     told: list[BatteryState] = []
     gateway.async_add_listener(lambda: told.append(gateway.state))
-    gx.set("system/0/Dc/Battery/Power", 1500)
+    gx.set("system/0/Dc/Vebus/Power", 1500)
     gx.set("system/0/Dc/Battery/Soc", 83.0)
     gx.set("settings/0/Settings/CGwacs/AcPowerSetPoint", 50.0)
     gx.set("settings/0/Settings/DynamicEss/Mode", 1)
@@ -82,8 +83,38 @@ async def test_changes_arrive_and_listeners_are_told(hass: HomeAssistant) -> Non
     assert (state.power, state.charge_level, state.grid_setpoint) == (1500, 83, 50)
     assert (state.dynamic_ess_mode, state.charge_current_limit) == (1, 40.0)
     assert len(told) == 5
-    gx.set("system/0/Dc/Battery/Power", 1500)
+    gx.set("system/0/Dc/Vebus/Power", 1500)
     assert len(told) == 5
+    await gateway.async_stop()
+
+
+async def test_inverter_power_wins_over_the_battery_monitor(
+    hass: HomeAssistant,
+) -> None:
+    """With both published, the inverter/charger's power is the battery power."""
+    gx = SimGx()
+    gateway = await _start(hass, gx)
+    gx.set("system/0/Dc/Battery/Power", -44)
+    gx.set("system/0/Dc/Vebus/Power", 2)
+    state = gateway.state
+    assert (state.power, state.power_source) == (2, "inverter")
+    assert state.battery_monitor_power == -44
+    await gateway.async_stop()
+
+
+async def test_battery_monitor_power_is_the_fallback(hass: HomeAssistant) -> None:
+    """Without inverter/charger power the battery monitor's value is used."""
+    gx = SimGx()
+    del gx.topics["system/0/Dc/Vebus/Power"]
+    gateway = await _start(hass, gx)
+    state = gateway.state
+    assert (state.power, state.power_source) == (-116.0, "battery_monitor")
+    gx.set("system/0/Dc/Vebus/Power", 5)
+    assert (gateway.state.power, gateway.state.power_source) == (5, "inverter")
+    gx.set("system/0/Dc/Vebus/Power", None)
+    assert gateway.state.power_source == "battery_monitor"
+    gx.set("system/0/Dc/Battery/Power", None)
+    assert (gateway.state.power, gateway.state.power_source) == (None, None)
     await gateway.async_stop()
 
 
@@ -94,6 +125,7 @@ async def test_null_values_are_unknown(hass: HomeAssistant) -> None:
     for path in (
         "system/0/Dc/Battery/Soc",
         "system/0/Dc/Battery/Power",
+        "system/0/Dc/Vebus/Power",
         "system/0/Dc/Battery/Voltage",
         "battery/512/Info/MaxChargeCurrent",
         "settings/0/Settings/CGwacs/AcPowerSetPoint",
@@ -102,6 +134,7 @@ async def test_null_values_are_unknown(hass: HomeAssistant) -> None:
         gx.set(path, None)
     state = gateway.state
     assert state.charge_level is state.power is state.voltage is None
+    assert state.power_source is None
     assert state.charge_current_limit is state.grid_setpoint is None
     assert state.dynamic_ess_mode is None
     assert state.fresh
@@ -130,6 +163,7 @@ async def test_only_the_needed_topics_are_subscribed(hass: HomeAssistant) -> Non
             "N/+/system/0/Serial",
             f"N/{p}/system/0/Dc/Battery/Soc",
             f"N/{p}/system/0/Dc/Battery/Power",
+            f"N/{p}/system/0/Dc/Vebus/Power",
             f"N/{p}/system/0/Dc/Battery/Voltage",
             f"N/{p}/battery/+/Info/MaxChargeCurrent",
             f"N/{p}/settings/0/Settings/CGwacs/AcPowerSetPoint",
@@ -263,7 +297,7 @@ async def test_reconnect_subscribes_again_and_asks_for_everything(
     gx.restore()
     await hass.async_block_till_done()
     assert gx.keepalives == [b"", b""]
-    assert len(gx.subscribed_filters) == 11  # the serial filter is not needed again
+    assert len(gx.subscribed_filters) == 12  # the serial filter is not needed again
     state = gateway.state
     assert state.connected
     assert state.fresh

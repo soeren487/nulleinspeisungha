@@ -26,7 +26,6 @@ from tests.conftest import (
     SimHouse,
     setup_entry,
 )
-from tests.test_battery_curtailment_flow import POWER
 from tests.test_curtailment_flow import (
     BUERO4,
     OMA,
@@ -140,7 +139,7 @@ class Plant:
             pv, bb = pv_inverter.power, bb_inverter.power
             self.outputs.append((self.sim.time, pv, bb))
             if self.gx is not None:
-                self.gx.set(POWER, pv + bb - self.load)
+                self.gx.charge(power=pv + bb - self.load)
                 grid = 0.0
             else:
                 grid = self.load - pv - bb
