@@ -42,6 +42,9 @@ _MIN_EFFICIENCY = 0.01
 """A Battery Efficiency below this is taken as this (no division by zero)."""
 TOP_UP_LEVEL = 95.0
 """Percent the battery must reach on a day for BatteryLife to lower its minimum."""
+MIN_BUFFER_POWER = 500.0
+"""W below which the inverter/charger works poorly: the least the Safety Buffer
+charges at."""
 
 
 class PriceSlot(Protocol):
@@ -118,7 +121,8 @@ class TopUp:
     level: float
     """Percent to reach."""
     end: datetime
-    """Timezone-aware end of the window (the end of the current local day)."""
+    """Timezone-aware end of the window: the end of the run of qualifying
+    quarter-hours that goes on at midnight, else midnight (the caller decides)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,6 +165,9 @@ class ChargingPlan:
     the horizon), with the planned charging; ``None`` when no sunrise was given
     or nothing could be planned."""
     reason: PlanReason
+    buffer_power: float | None = None
+    """W the Safety Buffer asks the House to charge at now; ``None`` when the
+    buffer does not apply to the current quarter-hour."""
 
     def is_due(self, now: datetime) -> bool:
         """Whether ``now`` lies inside a planned slot."""
@@ -297,6 +304,7 @@ def plan_charging(
     running: datetime | None = None,
     top_up: TopUp | None = None,
     buffer: float | None = None,
+    buffer_latched: bool = False,
 ) -> ChargingPlan:
     """Plan the charging that spares the House from buying at dear prices.
 
@@ -349,6 +357,17 @@ def plan_charging(
     shortfalls; ``buffer_kwh`` is
     what it adds to the quarter-hour compared with the plan without the buffer (and
     without the place a running quarter-hour keeps).
+
+    The buffer charges steadily, not at full power in every other quarter-hour:
+    its power (``buffer_power``) is, for every deadline of the pessimistic plans
+    (the end of the top-up window, the start of each shortfall), the energy they
+    place before it divided by the qualifying hours from now to it, divided by
+    ``1 - buffer``; the highest of these, at least ``MIN_BUFFER_POWER`` and at most
+    the Maximum Charge Power. The current quarter-hour gets that power for what
+    remains of it. With ``buffer_latched`` (the buffer charged in the quarter-hour
+    before) it applies as long as the pessimistic plans still need any energy and
+    the quarter-hour qualifies, so that the energy it already stored does not make
+    it pause.
     """
     now = _utc(now)
     horizon = now + MAX_HORIZON
@@ -394,9 +413,18 @@ def plan_charging(
 
     preset = 0.0
     forced_by_shortfall = False
+    buffer_power: float | None = None
     if buffer is not None and _utc(series[0].start) <= now:
-        preset, forced_by_shortfall = _buffer_start(
-            model, series, battery, buffer, wanted, top_end, running, now
+        preset, forced_by_shortfall, buffer_power = _buffer_start(
+            model,
+            series,
+            battery,
+            buffer,
+            wanted,
+            top_end,
+            running,
+            now,
+            buffer_latched,
         )
     planned = [0.0] * n
     if preset > _EPSILON:
@@ -406,7 +434,9 @@ def plan_charging(
         top_up_kwh = max(top_up_kwh - preset, 0.0)
 
     buffer_kwh = 0.0
-    if preset > _EPSILON:
+    if preset <= _EPSILON:
+        buffer_power = None
+    else:
         # Without the running quarter-hour's place: that is kept by an earlier
         # plan, and it may have been the buffer that put it there.
         plain = [0.0] * n
@@ -442,6 +472,7 @@ def plan_charging(
         energy_missing=missing_to_target,
         battery_at_sunrise=at_sunrise,
         reason=_reason(model, series, first, slots),
+        buffer_power=buffer_power,
     )
 
 
@@ -474,40 +505,75 @@ def _buffer_start(
     end: datetime,
     running: datetime | None,
     now: datetime,
-) -> tuple[float, bool]:
-    """What the two pessimistic runs put into the current quarter-hour (the larger),
-    as grid kWh at the real power, and whether it came from the shortfalls (else
-    the top-up)."""
+    latched: bool = False,
+) -> tuple[float, bool, float | None]:
+    """What the Safety Buffer puts into the current quarter-hour, as grid kWh, whether
+    that came from the shortfalls (else the top-up), and the power it charges at.
+
+    The pessimistic runs decide whether it applies and at what power (see
+    ``plan_charging``); nothing when they need nothing, or when they do not need the
+    current quarter-hour and the buffer is not ``latched``."""
     share = min(max(buffer, 0.0), 0.99)
     reduced = replace(
         battery, max_charge_power=battery.max_charge_power * (1.0 - share)
     )
     n = len(series)
+    window = sum(1 for q in series if _utc(q.start) < end)
     from_top_up = 0.0
+    total_top_up = 0.0
+    pace = 0.0
     if wanted is not None:
         # Run 1: the top-up alone, without any PV.
         dark = _Model(now, [replace(q, pv_w=0.0) for q in series], reduced, running)
         planned = [0.0] * n
         _plan_top_up(dark, planned, wanted, end, latest=True)
         from_top_up = planned[0]
+        total_top_up = sum(planned)
+        pace = _pace(dark, planned, [window])
     # Run 2: top-up and shortfalls with the counted PV, as a time margin.
     counted = _Model(now, series, reduced, running)
     planned = [0.0] * n
     top_phase = 0.0
+    top_total = 0.0
+    deadlines: list[int] = []
     if wanted is not None:
         _plan_top_up(counted, planned, wanted, end, latest=True)
         top_phase = planned[0]
+        top_total = sum(planned)
+        deadlines.append(window)
     run = counted.run(planned)
     if sum(run.shortfall) > _EPSILON:
+        deadlines.extend(i for i, s in enumerate(run.shortfall) if s > _EPSILON)
         _cover(counted, planned, run, latest=True)
     from_both = planned[0]
+    total_both = sum(planned)
+    pace = max(pace, _pace(counted, planned, deadlines))
     biggest = max(from_top_up, from_both)
-    if biggest <= _EPSILON:
-        return 0.0, False
-    scaled = min(model.max_grid(0), biggest / (1.0 - share))
-    amount = _feasible(model, [0.0] * n, 0, scaled)
-    by_top_up = from_top_up >= from_both - _EPSILON or top_phase > _EPSILON
-    return amount, not by_top_up
+    needs_any = max(total_top_up, total_both) > _EPSILON
+    if biggest <= _EPSILON and not (latched and needs_any and series[0].qualifies):
+        return 0.0, False, None
+    power = min(max(pace / (1.0 - share), MIN_BUFFER_POWER), battery.max_charge_power)
+    wanted_kwh = min(model.max_grid(0), power * model.hours[0] / 1000.0)
+    amount = _feasible(model, [0.0] * n, 0, wanted_kwh)
+    if biggest > _EPSILON:
+        by_top_up = from_top_up >= from_both - _EPSILON or top_phase > _EPSILON
+    else:
+        by_top_up = total_top_up >= total_both - _EPSILON or top_total > _EPSILON
+    return amount, not by_top_up, power
+
+
+def _pace(model: _Model, planned: Sequence[float], deadlines: Sequence[int]) -> float:
+    """The power in W that covers what ``planned`` places before each deadline (a
+    quarter index) if it were spread evenly over the qualifying hours from now to
+    it; the highest over the deadlines."""
+    series = model.quarters
+    best = 0.0
+    for k in deadlines:
+        hours = sum(model.hours[j] for j in range(k) if series[j].qualifies)
+        energy = sum(planned[:k])
+        if energy > _EPSILON and hours > _EPSILON:
+            best = max(best, energy / hours * 1000.0)
+    return best
 
 
 def _order(model: _Model, latest: bool) -> Callable[[int], tuple[bool, float, int]]:

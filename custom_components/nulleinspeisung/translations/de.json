@@ -347,6 +347,9 @@
       "top_up_energy": {
         "name": "Energie für BatteryLife-Vollladung"
       },
+      "buffer_charge_power": {
+        "name": "Ladeleistung Sicherheitspuffer"
+      },
       "battery_at_sunrise": {
         "name": "Batterie bei Sonnenaufgang"
       },

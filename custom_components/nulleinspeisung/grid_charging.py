@@ -73,6 +73,8 @@ DC_ENERGY_STEP = 0.05
 """kWh a DC Battery sensor may move before the plan is made again."""
 SETPOINT_TOLERANCE = 50.0
 """W the wanted setpoint must move by before it is changed."""
+_PLAN_EPSILON = 1e-6
+"""kWh below which a planned energy counts as none."""
 SETPOINT_INTERVAL = 10.0
 """Seconds between two recomputations of the wanted setpoint while charging."""
 
@@ -142,6 +144,17 @@ class GridCharging:
         self._top_up_day: date | None = None
         self._reached_today = False
         """Whether the battery reached the top-up level on ``_top_up_day``."""
+        self._top_up_end: datetime | None = None
+        """End of the window of the top-up last asked for."""
+        self._carried_end: datetime | None = None
+        """End of a window that reaches into the new local day: the top-up is not
+        dropped at midnight but goes on until it is reached or the window ends."""
+        self._plan_quarter: datetime | None = None
+        """The quarter-hour the current plan was made in."""
+        self._buffer_now = False
+        """Whether the Safety Buffer was charging when the plan was last made."""
+        self._buffer_latched = False
+        """Whether the Safety Buffer was charging in the quarter-hour before."""
         self._last_wanted: int | None = None
         self._started = False
         self._unsubs: list[CALLBACK_TYPE] = []
@@ -324,11 +337,17 @@ class GridCharging:
         ``now``; whether that changed (a new day that starts again does not count)."""
         today = dt_util.as_local(now).date()
         if today != self._top_up_day:
+            carried = self._top_up_end
+            self._carried_end = (
+                carried if carried is not None and carried > now else None
+            )
+            self._top_up_end = None
             self._top_up_day = today
             self._reached_today = False
         if level is None or self._reached_today or level < TOP_UP_LEVEL:
             return False
         self._reached_today = True
+        self._top_up_end = self._carried_end = None
         return True
 
     def _top_up_for(self, now: datetime) -> TopUp | None:
@@ -343,11 +362,47 @@ class GridCharging:
             or battery.active_minimum_soc
             <= battery.configured_minimum_soc + TOP_UP_MARGIN
         ):
+            self._top_up_end = None
             return None
-        midnight = dt_util.start_of_local_day(
-            dt_util.as_local(now).date() + timedelta(days=1)
+        carried = self._carried_end
+        end = carried if carried is not None and carried > now else None
+        if end is None:
+            self._carried_end = None
+            end = self._window_end(now)
+        self._top_up_end = end
+        return TopUp(level=TOP_UP_LEVEL, end=end)
+
+    def _window_end(self, now: datetime) -> datetime:
+        """The end of the top-up window that starts now: the end of the run of
+        qualifying quarter-hours that goes on at midnight (it may have begun before
+        it), else midnight."""
+        midnight = dt_util.as_utc(
+            dt_util.start_of_local_day(dt_util.as_local(now).date() + timedelta(days=1))
         )
-        return TopUp(level=TOP_UP_LEVEL, end=midnight)
+        prices = self._house.prices
+        if prices is None:
+            return midnight
+        points = sorted(prices.prices, key=lambda p: p.start)
+        if not points:
+            return midnight
+        length = slot_length(points)
+        starts = [p.start for p in points]
+        qualifying = PRICE_LEVEL_OPTIONS[self.price_levels]
+
+        def qualifies(moment: datetime) -> bool:
+            index = bisect_right(starts, moment) - 1
+            return (
+                index >= 0
+                and moment < points[index].start + length
+                and points[index].level in qualifying
+            )
+
+        if not qualifies(midnight - SLOT):
+            return midnight
+        end = midnight
+        while end < now + MAX_HORIZON and qualifies(end):
+            end += SLOT
+        return end
 
     @callback
     def _on_publisher(self) -> None:
@@ -372,6 +427,14 @@ class GridCharging:
         capacity = house.config.battery_capacity
         level = battery.charge_level if battery is not None else None
         self._track_top_up_level(level, now)
+        quarter = sunrise_energy.quarter_start(now)
+        if quarter != self._plan_quarter:
+            # The latch: the Safety Buffer goes on if it charged in the quarter-hour
+            # before, instead of being decided afresh at the boundary.
+            self._buffer_latched = (
+                self._buffer_now and self._plan_quarter == quarter - SLOT
+            )
+            self._plan_quarter = quarter
         self.deadline = solar.next_sunrise(
             house.config.latitude, house.config.longitude, now
         )
@@ -384,6 +447,7 @@ class GridCharging:
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
+            self._buffer_now = False
             return
         control = house.control
         self._planned_level = level
@@ -419,8 +483,10 @@ class GridCharging:
             running=self._running_slot(now),
             top_up=top_up,
             buffer=self.safety_buffer / 100.0,
+            buffer_latched=self._buffer_latched,
         )
         self.battery_at_sunrise = self.plan.battery_at_sunrise
+        self._buffer_now = self.buffer_forcing
 
     def _running_slot(self, now: datetime) -> datetime | None:
         """The start of the planned quarter-hour that ``now`` is in, if any."""
@@ -620,9 +686,20 @@ class GridCharging:
         """
         if not self._started:
             return
+        now = dt_util.utcnow()
+        stale = (
+            self.plan is not None
+            and self._plan_quarter != sunrise_energy.quarter_start(now)
+        )
+        if stale:
+            # A report at the very start of a quarter-hour can come before the
+            # replan of the boundary: the plan still has the slot that just ended
+            # and would release the override for a moment.
+            self._make_plan(now)
+            self._notify()
         overrides = self._house.wanted_overrides
         wanted: float | None = None
-        if self._state_at(dt_util.utcnow()) is GridChargingState.CHARGING:
+        if self._state_at(now) is GridChargingState.CHARGING:
             if refresh or overrides.setpoint is None:
                 wanted = self._charging_setpoint()
             else:
@@ -642,14 +719,14 @@ class GridCharging:
             self._notify()
 
     def _charging_setpoint(self) -> float:
-        """The grid import in W that makes the battery take the Maximum Charge Power.
+        """The grid import in W that makes the battery take the wanted charge power.
 
         The House's consumption minus what the Inverters produce is what the
-        House takes from the grid without the battery; the Maximum Charge Power
-        comes on top. A small change is not followed.
+        House takes from the grid without the battery; the charge power comes on
+        top. A small change is not followed.
         """
         house = self._house
-        power = house.control.maximum_charge_power
+        power = self._charge_power(dt_util.utcnow())
         consumption = house.consumption()
         if consumption is None:
             value = power
@@ -661,3 +738,16 @@ class GridCharging:
             target = last
         self._last_wanted = target
         return float(target)
+
+    def _charge_power(self, now: datetime) -> float:
+        """The battery charge power in W wanted now: the Maximum Charge Power, or
+        the lower power of the Safety Buffer when it alone makes the House charge
+        in this quarter-hour (when the normal plan charges too, the higher wins)."""
+        maximum = self._house.control.maximum_charge_power
+        plan = self.plan
+        if plan is None or plan.buffer_power is None:
+            return maximum
+        slot = next((s for s in plan.slots if s.start <= now < s.end), None)
+        if slot is None or slot.grid_kwh - plan.buffer_kwh > _PLAN_EPSILON:
+            return maximum
+        return min(plan.buffer_power, maximum)

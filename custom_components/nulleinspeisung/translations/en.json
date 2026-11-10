@@ -347,6 +347,9 @@
       "top_up_energy": {
         "name": "Energy for BatteryLife top-up"
       },
+      "buffer_charge_power": {
+        "name": "Safety buffer charge power"
+      },
       "battery_at_sunrise": {
         "name": "Battery at sunrise"
       },
