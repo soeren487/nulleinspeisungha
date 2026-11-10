@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0
 
 ### Changed
 
@@ -14,6 +14,10 @@
 ### Fixed
 
 - **No short "waiting" between two charged quarter-hours.** A report that arrived at the very start of a quarter-hour, before the plan was made again, found the plan without a slot there and released the setpoint override for a fraction of a second. The plan is now made first.
+
+### Good to know
+
+- Restart Home Assistant after updating.
 
 ## 0.10.1
 
