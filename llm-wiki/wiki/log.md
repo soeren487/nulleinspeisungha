@@ -1,5 +1,8 @@
 # Wiki Update Log
 
+## 2026-11-10
+* **Update**: [Requirements decisions](project/requirements-decisions.md): steady charging while the safety buffer applies (ticket 36).
+
 ## 2026-10-25
 * **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): sign of the inverter/charger DC power confirmed.
 * **Update**: [Victron ESS charge and discharge control](research/victron-ess-charge-discharge-control.md): the battery monitor's power is coarse and noisy; the inverter/charger's DC power is smooth.

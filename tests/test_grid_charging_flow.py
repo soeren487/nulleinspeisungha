@@ -595,7 +595,10 @@ async def test_a_replan_every_minute_keeps_the_running_quarter_hour(
     level = await _minutes(hass, freezer, gx, entry, 14, NEED_LEVEL)
     assert level > NEED_LEVEL + 4.0
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
-    assert _writes(gx) == [2200.0]  # written once, never released
+    # The Safety Buffer holds this quarter-hour; its power follows the shrinking
+    # need, so the value moves, but the override is never released.
+    assert _writes(gx)[0] == 2200.0
+    assert None not in _writes(gx)
 
 
 async def test_a_cheaper_later_quarter_hour_waits_for_the_running_one_to_end(
@@ -624,7 +627,8 @@ async def test_a_cheaper_later_quarter_hour_waits_for_the_running_one_to_end(
     _grid(hass, 2200)
     level = await _minutes(hass, freezer, gx, entry, 14, NEED_LEVEL)
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
-    assert _writes(gx) == [2200.0]
+    assert _writes(gx)[0] == 2200.0
+    assert None not in _writes(gx)
     # the quarter-hour ends: the cheaper 02:30 takes over what is left
     await _settle(hass, freezer, gx, to="2026-10-05T02:30")
     gx.charge(level=level + 0.5)
@@ -1247,6 +1251,7 @@ async def test_the_charging_device_sits_below_the_house(
             "expensive_shortfall",
             "uncovered_shortfall",
             "top_up_energy",
+            "buffer_charge_power",
             "battery_at_sunrise",
             "forecast_surplus",
             "forecast_in_use",
@@ -1273,6 +1278,7 @@ async def test_the_charging_device_sits_below_the_house(
         "sensor.home_expensive_shortfall",
         "sensor.home_uncovered_shortfall",
         "sensor.home_top_up_energy",
+        "sensor.home_buffer_charge_power",
         "sensor.home_battery_at_sunrise",
         "sensor.home_forecast_surplus",
         "binary_sensor.home_forecast_in_use",

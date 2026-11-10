@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Safety Buffer charges steadily, not at full power in every other quarter-hour.** On 2026-11-10 from 21:30 both AC Batteries charged for the BatteryLife top-up because of the Safety Buffer, but the living house charged only every other quarter-hour: it charged one at full power, which gained two half-power quarter-hours, so the next was not needed. The buffer now charges at the power the pessimistic case needs: for every deadline (the end of the top-up window, the start of each shortfall) the energy needed by then divided by the qualifying hours until then, divided by (1 minus the buffer); the highest of these, at least 500 W and at most the Maximum Charge Power. Once it has started it goes on in the following quarter-hours as long as that case still needs energy. Where the normal plan charges as well, the Maximum Charge Power is used.
+- **The BatteryLife top-up may be reached after midnight.** When the prices after midnight are known and qualify, the window ends at the end of the qualifying run that is going on at midnight instead of at midnight, so the battery may be charged for longer at less power. Reaching 95 % in that time counts for the new day, and a top-up still wanted at midnight is not dropped.
+
+### Added
+
+- A sensor "Safety buffer charge power" ("Ladeleistung Sicherheitspuffer") on the Grid charging device shows the power the Safety Buffer asks for in the current quarter-hour, 0 while it does not apply.
+
+### Fixed
+
+- **No short "waiting" between two charged quarter-hours.** A report that arrived at the very start of a quarter-hour, before the plan was made again, found the plan without a slot there and released the setpoint override for a fraction of a second. The plan is now made first.
+
 ## 0.10.1
 
 ### Fixed

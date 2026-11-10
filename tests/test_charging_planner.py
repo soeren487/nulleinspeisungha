@@ -1170,3 +1170,208 @@ def test_a_cheap_night_before_a_sunny_day_is_not_charged_in_for_the_shortfalls()
         buffer=0.5,
     )
     assert at("02:00") in [s.start for s in no_pv.slots]
+
+
+# -- the Safety Buffer charges steadily (ticket 36) ---------------------------
+
+LIVING_LEVEL = 95.0 - 2.4 * E / 10.0 * 100.0
+"""2026-11-10, 21:30: the top-up to 95 % needs 2.4 kWh from the grid."""
+OFFICE_LEVEL = 95.0 - 4.1 * E / 10.0 * 100.0
+
+
+def night_plan(
+    now: datetime,
+    level: float,
+    window_end: str = "24:00",
+    qualifying_until: str = "24:00",
+    latched: bool = False,
+    **kw,
+) -> ChargingPlan:
+    """The top-up of the evening of 2026-11-10 with the buffer at 50 %: the
+    quarter-hours up to ``qualifying_until`` qualify (0.10), the ones to 02:00 do
+    not (0.30), 300 W of load; the window ends at ``window_end``."""
+    quarters = []
+    moment = now - timedelta(minutes=now.minute % 15)
+    while moment < at("26:00"):
+        qualifies = moment < at(qualifying_until)
+        quarters.append(Quarter(moment, 0.10 if qualifies else 0.30, qualifies, 300.0))
+        moment += QUARTER
+    return plan_charging(
+        now,
+        quarters,
+        battery(charge_level=level, **kw),
+        top_up=TopUp(95.0, at(window_end)),
+        buffer=0.5,
+        buffer_latched=latched,
+    )
+
+
+def charge_through(level: float, **kw) -> tuple[list[ChargingPlan], float]:
+    """Plan every quarter-hour from 21:30 to midnight as the House would: the
+    battery gains what the quarter's plan charges, and the buffer is latched when
+    it charged in the quarter before. The plans and the final level."""
+    plans = []
+    latched = False
+    now = at("21:30")
+    while now < at("24:00"):
+        plan = night_plan(now, level, latched=latched, **kw)
+        plans.append(plan)
+        if plan.slots and plan.slots[0].start == now:
+            level += plan.slots[0].grid_kwh * E / 10.0 * 100.0
+        latched = plan.buffer_kwh > 0.0
+        now += QUARTER
+    return plans, level
+
+
+def test_the_buffer_charges_steadily_below_the_full_power_in_every_quarter() -> None:
+    """Ten quarter-hours, 2.4 kWh: at half power they would just do, so the buffer
+    starts now; it must not charge at full power now and pause next quarter."""
+    first = night_plan(at("21:30"), LIVING_LEVEL)
+
+    assert first.buffer_kwh > 0.0
+    assert first.buffer_power is not None
+    assert 500.0 < first.buffer_power < 2100.0
+    # 2.4 kWh in 2.5 h is 960 W; at half the time 1920 W.
+    assert first.buffer_power == pytest.approx(2.4 / 2.5 * 1000.0 / 0.5)
+    assert grid_at(first, "21:30") == pytest.approx(first.buffer_power * 0.25 / 1000.0)
+
+
+def test_the_latch_keeps_the_buffer_charging_in_the_next_quarters() -> None:
+    plans, level = charge_through(LIVING_LEVEL)
+
+    # Every quarter-hour charges, until the top-up is reached.
+    reached = next(i for i, p in enumerate(plans) if not p.slots)
+    assert reached >= 5
+    for i, plan in enumerate(plans[:reached]):
+        assert plan.slots[0].start == at("21:30") + QUARTER * i
+        assert plan.buffer_power is not None
+    assert all(not p.slots for p in plans[reached:])
+    assert level >= 95.0 - 0.01
+    # The power follows the need: it never rises, never leaves the limits.
+    powers = [p.buffer_power for p in plans[:reached]]
+    assert powers == sorted(powers, reverse=True)
+    assert all(500.0 <= p <= 2100.0 for p in powers)
+
+
+def test_without_the_latch_the_buffer_would_pause() -> None:
+    """What the ticket saw: the energy stored makes the next quarter unnecessary."""
+    first = night_plan(at("21:30"), LIVING_LEVEL)
+    level = LIVING_LEVEL + first.slots[0].grid_kwh * E / 10.0 * 100.0
+
+    assert at("21:45") not in [s.start for s in night_plan(at("21:45"), level).slots]
+    latched = night_plan(at("21:45"), level, latched=True)
+    assert latched.slots[0].start == at("21:45")
+    assert latched.buffer_power is not None
+
+
+def test_the_latch_needs_an_open_need_and_a_qualifying_quarter() -> None:
+    reached = night_plan(at("22:00"), 95.0, latched=True)
+    assert reached.slots == ()
+    assert reached.buffer_power is None
+
+    # The window is still open, the quarter-hour is not qualifying.
+    quarters = [
+        Quarter(at("22:00") + QUARTER * i, 0.30 if i == 0 else 0.10, i > 0, 300.0)
+        for i in range(8)
+    ]
+    plan = plan_charging(
+        at("22:00"),
+        quarters,
+        battery(charge_level=LIVING_LEVEL),
+        top_up=TopUp(95.0, at("24:00")),
+        buffer=0.5,
+        buffer_latched=True,
+    )
+    assert plan.buffer_power is None
+    assert at("22:00") not in [s.start for s in plan.slots]
+
+
+def test_the_office_house_charges_at_the_full_power_continuously() -> None:
+    """4.1 kWh in ten quarter-hours is more than half power can do."""
+    plans, level = charge_through(OFFICE_LEVEL)
+
+    assert plans[0].buffer_power == pytest.approx(2100.0)
+    full = [p for p in plans if p.buffer_power is not None]
+    assert len(full) >= 8
+    for i, plan in enumerate(full):
+        assert plan.slots[0].start == at("21:30") + QUARTER * i
+    for plan in full[:6]:
+        assert plan.slots[0].grid_kwh == pytest.approx(GRID_PER_QUARTER)
+    assert level >= 95.0 - 0.01
+
+
+def test_qualifying_quarters_after_midnight_lower_the_power() -> None:
+    """The window reaches to 02:00 when the prices go on qualifying: the same need
+    is spread over more hours."""
+    midnight = night_plan(at("21:30"), LIVING_LEVEL, latched=True)
+    later = night_plan(
+        at("21:30"),
+        LIVING_LEVEL,
+        window_end="26:00",
+        qualifying_until="26:00",
+        latched=True,
+    )
+
+    assert later.buffer_power is not None
+    assert midnight.buffer_power is not None
+    assert later.buffer_power < midnight.buffer_power
+    # 2.4 kWh in 4.5 h is 533 W, at half the time 1067 W.
+    assert later.buffer_power == pytest.approx(2.4 / 4.5 * 1000.0 / 0.5)
+
+
+def test_the_buffer_never_charges_below_500_w() -> None:
+    """A small need at the start of a long window."""
+    plan = night_plan(
+        at("21:30"),
+        95.0 - 0.3 * E / 10.0 * 100.0,
+        window_end="26:00",
+        qualifying_until="26:00",
+        latched=True,
+    )
+
+    assert plan.buffer_power == pytest.approx(500.0)
+    assert grid_at(plan, "21:30") == pytest.approx(0.125)
+
+
+def test_the_buffer_never_charges_above_the_maximum_charge_power() -> None:
+    plan = night_plan(at("21:30"), OFFICE_LEVEL, max_charge_power=1500.0)
+
+    assert plan.buffer_power == pytest.approx(1500.0)
+    assert grid_at(plan, "21:30") == pytest.approx(1500.0 * 0.25 / 1000.0)
+
+
+def test_a_part_of_the_current_quarter_counts_with_what_remains_of_it() -> None:
+    plan = night_plan(at("21:30") + timedelta(minutes=5), LIVING_LEVEL)
+
+    assert plan.buffer_power is not None
+    # 2.4 kWh in 2.33 h, at half the time.
+    assert plan.buffer_power == pytest.approx(2.4 / (2.5 - 5 / 60) * 1000.0 / 0.5)
+    assert grid_at(plan, "21:30") == pytest.approx(
+        plan.buffer_power * (10 / 60) / 1000.0
+    )
+
+
+def test_the_charge_target_limits_the_steady_buffer_too() -> None:
+    plan = night_plan(at("21:30"), OFFICE_LEVEL, charge_target=80.0)
+
+    # 80 % hold 8.0 of 10 kWh; the level is OFFICE_LEVEL = 95 - 3.62 = 91.4 % ...
+    # below the target nothing is charged at all.
+    assert plan.slots == ()
+    assert plan.buffer_power is None
+
+
+def test_without_a_buffer_there_is_no_buffer_power() -> None:
+    quarters = [
+        Quarter(at("21:30") + QUARTER * i, 0.10, True, 300.0) for i in range(10)
+    ]
+    plan = plan_charging(
+        at("21:30"),
+        quarters,
+        battery(charge_level=LIVING_LEVEL),
+        top_up=TopUp(95.0, at("24:00")),
+        buffer=None,
+        buffer_latched=True,
+    )
+
+    assert plan.buffer_power is None
+    assert plan.buffer_kwh == 0.0

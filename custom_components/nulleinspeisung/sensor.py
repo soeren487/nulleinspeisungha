@@ -266,6 +266,7 @@ async def async_setup_entry(
                     ChargingEnergySensor(house, "expensive_shortfall"),
                     ChargingEnergySensor(house, "uncovered_shortfall"),
                     ChargingEnergySensor(house, "top_up_energy"),
+                    BufferChargePowerSensor(house),
                     ReferencePriceSensor(house),
                     SunriseEnergySensor(house, "battery_at_sunrise"),
                     SunriseEnergySensor(house, "forecast_surplus"),
@@ -834,6 +835,27 @@ class ChargingEnergySensor(ChargingEntity, SensorEntity):
         if self._key != "top_up_energy":
             return None
         return {"wanted": self.charging.top_up_wanted}
+
+
+class BufferChargePowerSensor(ChargingEntity, SensorEntity):
+    """The charge power the Safety Buffer asks for in the current quarter-hour."""
+
+    _attr_translation_key = "buffer_charge_power"
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "buffer_charge_power", "sensor")
+
+    @property
+    def native_value(self) -> float | None:
+        """The power in W while the buffer applies, else 0; unknown without a plan."""
+        plan = self.charging.plan
+        if plan is None:
+            return None
+        return round(plan.buffer_power or 0.0)
 
 
 class ReferencePriceSensor(ChargingEntity, SensorEntity):
