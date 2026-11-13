@@ -43,6 +43,13 @@ def normalize_base_url(address: str) -> str:
     return address.rstrip("/")
 
 
+def _describe(err: Exception) -> str:
+    """Say what went wrong; a timeout has no text of its own."""
+    if isinstance(err, TimeoutError):
+        return f"timed out after {DTU_REQUEST_TIMEOUT:g} s"
+    return str(err) or type(err).__name__
+
+
 class DtuClient:
     """Reads one DTU, restarts it and sets non-persistent Inverter limits."""
 
@@ -192,7 +199,7 @@ class DtuClient:
                     raise DtuConnectionError(f"DTU answered HTTP {response.status}")
                 data = await response.json(content_type=None)
         except (aiohttp.ClientError, TimeoutError, ValueError) as err:
-            raise DtuConnectionError(f"Cannot reach DTU: {err}") from err
+            raise DtuConnectionError(f"Cannot reach DTU: {_describe(err)}") from err
         if not isinstance(data, dict):
             raise DtuConnectionError("Unexpected answer from DTU")
         return data
@@ -218,5 +225,5 @@ class DtuClient:
                 except ValueError:
                     return None
         except (aiohttp.ClientError, TimeoutError) as err:
-            raise DtuConnectionError(f"Cannot reach DTU: {err}") from err
+            raise DtuConnectionError(f"Cannot reach DTU: {_describe(err)}") from err
         return reply if isinstance(reply, dict) else None

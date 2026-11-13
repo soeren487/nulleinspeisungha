@@ -3,9 +3,9 @@
 24 October 2026, 10:00 local (UTC+2). The AC Battery has 10 kWh and stands at
 76 % with the Victron's active minimum at 75 % (the owner's case); the minimum the
 owner configured is 20 %. The Expected Load is 100 W. The prices are normal at 0.40
-but for 14:00 to 16:00 on the 24th and on the 25th, which are cheap at 0.10. 95 %
-hold 2.0 kWh above the minimum; the battery has used up its 0.1 kWh by 14:00, so
-the top-up buys 2.0 / e kWh from the grid.
+but for 14:00 to 16:00 on the 24th and on the 25th, which are cheap at 0.10. 100 %
+hold 2.5 kWh above the minimum; the battery has used up its 0.1 kWh by 14:00, so
+the top-up (to 100 %, the default level) buys 2.5 / e kWh from the grid.
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from tests.test_grid_charging_flow import (
 
 ACTIVE = "system/0/Control/ActiveSocLimit"
 CONFIGURED = "settings/0/Settings/CGwacs/BatteryLife/MinimumSocLimit"
-TOP_UP_GRID = 2.0 / ROOT
+TOP_UP_GRID = 2.5 / ROOT
 SETPOINT_SLACK = 60.0
 """W the held setpoint may lag the power: a change under 50 W is not followed."""
 ON = {"batterylife_top_up": None}
@@ -173,7 +173,7 @@ async def test_a_stored_off_position_is_restored(
     assert _energy(hass) == 0.0
 
 
-async def test_after_the_battery_reached_95_today_there_is_no_top_up_until_tomorrow(
+async def test_after_the_battery_reached_the_level_today_no_top_up_until_tomorrow(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
     tibber: SimTibber,
@@ -185,9 +185,9 @@ async def test_after_the_battery_reached_95_today_there_is_no_top_up_until_tomor
     )
     assert _energy(hass) == pytest.approx(TOP_UP_GRID)
 
-    # 12:00: the PV (or anything else) took the battery to 95 %.
+    # 12:00: the PV (or anything else) took the battery to 100 %.
     await _settle(hass, freezer, gx, to="2026-10-24T12:00")
-    gx.charge(level=95.0)
+    gx.charge(level=100.0)
     await hass.async_block_till_done()
     assert _energy(hass) == 0.0
     assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is False
@@ -276,6 +276,117 @@ async def test_the_stored_safety_buffer_is_restored(
     assert house.grid_charging.safety_buffer == 20.0
 
 
+async def test_the_top_up_level_defaults_to_100_percent(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    entry, _sim = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+
+    state = _state(hass, "number", "top_up_level")
+    assert float(state.state) == 100.0
+    assert (state.attributes["min"], state.attributes["max"]) == (90.0, 100.0)
+    assert state.attributes["step"] == 1.0
+    assert next(
+        iter(entry.runtime_data.houses.values())
+    ).grid_charging.top_up_level == (100.0)
+    assert _energy(hass) == pytest.approx(2.5 / ROOT)
+
+
+async def test_the_stored_top_up_level_is_restored(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    mock_restore_cache_with_extra_data(
+        hass,
+        [
+            (
+                State("number.home_top_up_level", "95"),
+                {
+                    "native_max_value": 100,
+                    "native_min_value": 90,
+                    "native_step": 1,
+                    "native_unit_of_measurement": "%",
+                    "native_value": 95,
+                },
+            ),
+        ],
+    )
+    entry, _sim = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+
+    assert float(_value(hass, "number", "top_up_level")) == 95.0
+    assert next(
+        iter(entry.runtime_data.houses.values())
+    ).grid_charging.top_up_level == (95.0)
+    assert _energy(hass) == pytest.approx(2.0 / ROOT)
+
+
+async def test_the_top_up_charges_to_the_level_that_is_set(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+    assert _energy(hass) == pytest.approx(2.5 / ROOT)
+
+    await _call(hass, "number", "set_value", "top_up_level", value=95)
+    assert _energy(hass) == pytest.approx(2.0 / ROOT)
+    await _call(hass, "number", "set_value", "top_up_level", value=90)
+    assert _energy(hass) == pytest.approx(1.5 / ROOT)
+
+
+async def test_reaching_the_level_that_is_set_counts_for_the_day(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """At 95 % set, 97 % reported is reached; at 100 % set it is not."""
+    _entry, gx = await _start(
+        hass, dtu_network, tibber, freezer, _gx(), days=_two_days, switches=ON
+    )
+    gx.charge(level=97.0)
+    await hass.async_block_till_done()
+    assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is True
+
+    await _call(hass, "number", "set_value", "top_up_level", value=95)
+    assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is False
+    assert _energy(hass) == 0.0
+
+
+async def test_the_battery_is_held_from_the_first_top_up_quarter_to_the_level(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """The top-up charges in the latest cheap quarter-hours (14:30 to 15:45 local
+    on the 24th); from the first of them the battery does not discharge what was
+    bought. Before it the cheap quarter-hours are not blocked. (Without the Safety
+    Buffer, which would start charging earlier.)"""
+    _entry, gx = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+    await _call(hass, "number", "set_value", "safety_buffer", value=0)
+    assert _value(hass, "binary_sensor", "discharge_block") == "off"
+    await _settle(hass, freezer, gx, to="2026-10-24T14:29")
+    assert _value(hass, "binary_sensor", "discharge_block") == "off"
+    await _settle(hass, freezer, gx, to="2026-10-24T14:30")
+    assert _value(hass, "binary_sensor", "discharge_block") == "on"
+    assert _value(hass, "sensor", "grid_charging_state") == "charging"
+    await _settle(hass, freezer, gx, to="2026-10-24T15:50")
+    assert _value(hass, "binary_sensor", "discharge_block") == "on"
+    await _settle(hass, freezer, gx, to="2026-10-24T16:00")
+    assert _value(hass, "binary_sensor", "discharge_block") == "off"
+
+
 async def test_when_half_power_without_sun_only_just_suffices_it_charges_now(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
@@ -325,7 +436,7 @@ async def test_with_a_buffer_of_zero_the_full_power_suffices_later(
 # -- steady charging by the Safety Buffer, and a window over midnight --------
 #
 # The evening of 24 October 2026. The Victron's minimum is 40 % (the owner's is
-# 20 %), so 95 % hold 5.5 kWh above it. Expected Load 100 W. At 73.8 % the top-up
+# 20 %), so 100 % hold 6.0 kWh above it. Expected Load 100 W. At 78.8 % the top-up
 # needs 2.4 kWh from the grid. The prices of the evening are cheap from 21:30; what
 # they do after midnight a test says.
 
@@ -360,7 +471,7 @@ def _small_hours(until: str) -> tuple[str, ...]:
     )
 
 
-async def _night(hass, dtu_network, tibber, freezer, at, price_setup, level=73.8):
+async def _night(hass, dtu_network, tibber, freezer, at, price_setup, level=78.8):
     return await _setup(
         hass,
         dtu_network,
@@ -391,7 +502,7 @@ async def test_the_buffer_charges_steadily_with_the_override_held_between_quarte
     _entry, gx = await _night(
         hass, dtu_network, tibber, freezer, "2026-10-24T21:30", _evening()
     )
-    level = 73.8
+    level = 78.8
     # The timer brings the setpoint to the current plan (the Expected Load was
     # set after the first one).
     await _settle(hass, freezer, gx, seconds=10)
@@ -421,7 +532,13 @@ async def test_the_buffer_charges_steadily_with_the_override_held_between_quarte
     # the falling power.
     assert None not in _writes(gx)
     assert _override(gx) < 2020.0
-    assert _override(gx) == pytest.approx(100.0 + powers[-1], abs=SETPOINT_SLACK)
+    # The setpoint is recomputed on the timer only, so it follows the power a little
+    # late: never below it, and within a step of it.
+    assert (
+        100.0 + powers[-1] - SETPOINT_SLACK
+        <= _override(gx)
+        <= 100.0 + powers[-1] + 120.0
+    )
 
 
 async def test_the_setpoint_override_is_not_released_at_the_start_of_a_quarter(
@@ -439,7 +556,7 @@ async def test_the_setpoint_override_is_not_released_at_the_start_of_a_quarter(
     writes = len(_writes(gx))
 
     freezer.move_to(_local("2026-10-24T21:45"))
-    gx.charge(level=73.9)
+    gx.charge(level=78.9)
     await hass.async_block_till_done()
 
     assert _value(hass, "sensor", "grid_charging_state") == "charging"
@@ -520,10 +637,10 @@ async def test_a_top_up_running_at_midnight_is_not_dropped_and_not_doubled(
     slots = _state(hass, "sensor", "next_charging_start").attributes["slots"]
     assert all(slot < "2026-10-25T00:00" for slot in slots)
 
-    # 00:30: the battery has reached 95 % (in the new day): that is the new day's
+    # 00:30: the battery has reached 100 % (in the new day): that is the new day's
     # top-up, so none is planned for the rest of it.
     await _settle(hass, freezer, gx, to="2026-10-25T00:30")
-    gx.charge(level=95.0)
+    gx.charge(level=100.0)
     await hass.async_block_till_done()
     assert _energy(hass) == 0.0
     assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is False

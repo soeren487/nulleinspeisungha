@@ -49,6 +49,7 @@ STORAGE_KEY = f"{DOMAIN}.dc_output_history_house-home"
 START = datetime(2026, 10, 14, 8, 0, tzinfo=UTC)  # 10:00 in Berlin
 METER = "sensor.grid_meter"
 ROOT = math.sqrt(0.78)
+ACTIVE_MINIMUM = "system/0/Control/ActiveSocLimit"
 NOW = _local("2026-10-04T22:00")
 BLOCK_HOURS = 5 * 0.25
 SENSORS = ["sensor.dc_battery_1", "sensor.dc_battery_2"]
@@ -268,7 +269,10 @@ async def _setup(
                 entity_id, value[0], {"unit_of_measurement": value[1]}
             )
     gx = SimGx()
-    gx.no_minimum()  # these tests count the whole content, as a GX without one
+    # These tests count the whole content: the GX reports a minimum of 0 %. Without
+    # a reported minimum the House assumes 10 %, so the 1 kWh at 10 % would be
+    # unusable and the shortfall the full 99 * 0.025 = 2.475 kWh.
+    gx.topics[ACTIVE_MINIMUM] = '{"value":0.0}'
     gx.charge(level=level, power=0.0)
     hass.states.async_set(METER, "100", {"unit_of_measurement": "W"})
     entry = await setup_entry(

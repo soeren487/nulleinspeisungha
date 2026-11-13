@@ -19,6 +19,21 @@ from .dtu_models import InverterSnapshot
 from .house import House
 
 
+def _via(
+    hass: HomeAssistant, entry: ConfigEntry | None, identifier: tuple[str, str]
+) -> dict[str, str]:
+    """``via_device_id`` of the registered device with this identifier.
+
+    Empty while the device does not exist, which leaves the new device on top.
+    """
+    if entry is None:
+        return {}
+    parent = dr.async_get(hass).async_get_device_by_identifier(
+        identifier, entry.entry_id
+    )
+    return {"via_device_id": parent.id} if parent is not None else {}
+
+
 def dtu_device_info(coordinator: DtuCoordinator) -> DeviceInfo:
     """Device description of the DTU itself."""
     snapshot = coordinator.data
@@ -45,7 +60,11 @@ class InverterEntity(CoordinatorEntity[DtuCoordinator]):
         inverter = coordinator.data.inverters[serial]
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, serial)},
-            via_device=(DOMAIN, coordinator.dtu_serial),
+            **_via(
+                coordinator.hass,
+                coordinator.config_entry,
+                (DOMAIN, coordinator.dtu_serial),
+            ),
             name=inverter.name,
             manufacturer=INVERTER_MAKER,
             model=inverter.model,
@@ -138,7 +157,7 @@ def control_device_info(house: House) -> DeviceInfo:
     """Device description of the inverter control of the House, below the House."""
     return DeviceInfo(
         identifiers={(DOMAIN, f"{house.config.unique_id}_control")},
-        via_device=(DOMAIN, house.config.unique_id),
+        **_via(house.hass, house.entry, (DOMAIN, house.config.unique_id)),
         translation_key="inverter_control",
         translation_placeholders={"house": house.config.name},
         manufacturer="Nulleinspeisung",
@@ -150,7 +169,7 @@ def charging_device_info(house: House) -> DeviceInfo:
     """Device description of the Grid Charging of the House, below the House."""
     return DeviceInfo(
         identifiers={(DOMAIN, f"{house.config.unique_id}_charging")},
-        via_device=(DOMAIN, house.config.unique_id),
+        **_via(house.hass, house.entry, (DOMAIN, house.config.unique_id)),
         translation_key="grid_charging",
         translation_placeholders={"house": house.config.name},
         manufacturer="Nulleinspeisung",

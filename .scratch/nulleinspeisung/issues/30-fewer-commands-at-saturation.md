@@ -4,8 +4,10 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** needs-triage
+**Status:** needs-info
 
 - [ ] The command count in that situation is measured on the real installation's history after ticket 29 is released
 - [ ] A rule is chosen (for example a minimum change before a limit is sent again, or a tolerance band that follows the measured noise) and recorded in the spec
 - [ ] In the simulated case the commands per Inverter fall to single digits per 30 minutes without more export
+
+2026-11-13: Waits for spring 2027 (owner): it needs sunny days with a full AC Battery to measure.

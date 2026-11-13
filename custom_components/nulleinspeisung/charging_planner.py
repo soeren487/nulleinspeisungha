@@ -19,7 +19,7 @@ stored above the minimum charge level (the floor).
 from __future__ import annotations
 
 import math
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -40,15 +40,13 @@ _FIT = 1e-9
 """kWh of rounding allowed when a content is compared with the Charge Target."""
 _MIN_EFFICIENCY = 0.01
 """A Battery Efficiency below this is taken as this (no division by zero)."""
-TOP_UP_LEVEL = 95.0
-"""Percent the battery must reach on a day for BatteryLife to lower its minimum."""
 MIN_BUFFER_POWER = 500.0
 """W below which the inverter/charger works poorly: the least the Safety Buffer
 charges at."""
 
 
 class PriceSlot(Protocol):
-    """What ``discharge_block_active`` needs to know of one price slot."""
+    """What ``slot_length`` needs to know of one price slot."""
 
     @property
     def start(self) -> datetime:
@@ -111,7 +109,8 @@ class BatteryModel:
     ignore_efficiency: bool = False
     """Whether the worth test is skipped."""
     discharge_blocks: bool = True
-    """Whether Discharge Blocks apply: the battery is held in qualifying quarters."""
+    """Whether the House may apply Discharge Blocks at all (Grid Charging is on);
+    the planner then decides in which quarters the battery is held."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,10 +167,18 @@ class ChargingPlan:
     buffer_power: float | None = None
     """W the Safety Buffer asks the House to charge at now; ``None`` when the
     buffer does not apply to the current quarter-hour."""
+    held: tuple[datetime, ...] = ()
+    """Starts of the qualifying quarter-hours in which the battery is held (a
+    Discharge Block): those the planner holds back stored energy in for a dearer
+    time, and those in which the plan charges. Empty without Discharge Blocks."""
 
     def is_due(self, now: datetime) -> bool:
         """Whether ``now`` lies inside a planned slot."""
         return any(slot.start <= now < slot.end for slot in self.slots)
+
+    def is_held(self, now: datetime) -> bool:
+        """Whether ``now`` lies inside a quarter-hour in which the battery is held."""
+        return any(start <= now < start + SLOT for start in self.held)
 
 
 def _utc(moment: datetime) -> datetime:
@@ -186,27 +193,6 @@ def slot_length(prices: Sequence[PriceSlot]) -> timedelta:
         if (step := _utc(b.start) - _utc(a.start)) > timedelta(0)
     ]
     return min(steps) if steps else DEFAULT_SLOT
-
-
-def discharge_block_active(
-    now: datetime,
-    prices: Sequence[PriceSlot],
-    qualifying: Collection[Any],
-) -> bool:
-    """Whether a Discharge Block is active at ``now``.
-
-    True when the price point valid at ``now`` (``start <= now < start + slot
-    length``) is known and its Price Level is one of ``qualifying``. Whether
-    charging is planned, the charge level and the Battery Efficiency play no part.
-    """
-    if not prices:
-        return False
-    now = _utc(now)
-    length = slot_length(prices)
-    return any(
-        _utc(p.start) <= now < _utc(p.start) + length and p.level in qualifying
-        for p in prices
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +247,12 @@ class _Model:
             max(b.capacity_kwh * (b.charge_level - floor) / 100.0, 0.0), self.full
         )
         """Content now; nothing below the floor counts."""
+        self.held = [False] * len(quarters)
+        """The qualifying quarters in which the battery is held (decided so far)."""
+        self.top: tuple[float, int] | None = None
+        """While a top-up is being planned: its content and window length. The
+        quarters from the first planned one to the one that reaches the content are
+        held too, whatever is planned."""
 
     def max_grid(self, i: int) -> float:
         """The most energy that can be drawn from the grid in quarter ``i``."""
@@ -268,6 +260,44 @@ class _Model:
 
     def run(self, planned: Sequence[float]) -> _Run:
         """Follow the content through every quarter; ``planned`` is grid kWh."""
+        held = self.held
+        if self.top is not None:
+            top = self.top_held(planned)
+            held = [a or b for a, b in zip(held, top, strict=True)]
+        return self._simulate(planned, held)
+
+    def top_held(self, planned: Sequence[float]) -> list[bool]:
+        """The qualifying quarters held for the top-up in ``self.top``: from the
+        first planned one to the one in which the content reaches the top-up level,
+        within its window. Holding there keeps the battery from discharging what
+        was just bought."""
+        n = len(self.quarters)
+        held = [False] * n
+        if self.top is None or not self.b.discharge_blocks:
+            return held
+        level, window = self.top
+        first = next((j for j in range(window) if planned[j] > 0.0), None)
+        if first is None:
+            return held
+        for j in range(first, window):
+            held[j] = self.quarters[j].qualifies
+        run = self._simulate(planned, held)
+        for j in range(first, window):
+            after = run.before[j + 1] if j + 1 < n else run.end
+            if after >= level - _FIT:
+                for k in range(j + 1, n):
+                    held[k] = False
+                break
+        return held
+
+    def fix_top_up(self, planned: Sequence[float]) -> None:
+        """The top-up is planned: keep its held quarters for the rest of the run."""
+        if self.top is not None:
+            top = self.top_held(planned)
+            self.held = [a or b for a, b in zip(self.held, top, strict=True)]
+            self.top = None
+
+    def _simulate(self, planned: Sequence[float], held: Sequence[bool]) -> _Run:
         b, root = self.b, self.root
         content = self.start
         before: list[float] = []
@@ -281,7 +311,7 @@ class _Model:
                 # The House's own net load comes from the grid: the quarter
                 # qualifies, so that is no shortfall.
                 content = min(content + planned[i] * root, self.full)
-            elif q.qualifies and b.discharge_blocks:
+            elif held[i] and q.qualifies and b.discharge_blocks:
                 # Held: PV surplus may charge the battery, a deficit is bought.
                 if net < 0.0:
                     content = min(content - net * root, self.full)
@@ -314,13 +344,28 @@ def plan_charging(
 
     * a planned quarter: the battery gains the planned grid energy times ``e``,
       never above the Charge Target; the House's load comes from the grid.
-    * a qualifying quarter not planned, with Discharge Blocks: the battery is
-      held, PV surplus (PV plus DC Battery Support minus load) charges it times
-      ``e`` up to its capacity, a deficit comes from the grid.
+    * a quarter in which the battery is held (a qualifying quarter, with Discharge
+      Blocks, that the planner holds, see below): PV surplus (PV plus DC Battery
+      Support minus load) charges it times ``e`` up to its capacity, a deficit
+      comes from the grid.
     * any other quarter: the load minus PV and support is delivered by the
       battery, taking that divided by ``e`` from its content down to the floor;
       what it cannot deliver is a shortfall at this quarter's price if the quarter
       does not qualify. A negative net load charges the battery times ``e``.
+
+    Nothing is held at first. Holding comes before buying, since energy already
+    stored costs no conversion loss. For each shortfall, earliest first, the
+    qualifying quarters before it whose price is lower than the shortfall's, latest
+    first (the energy is held for the shortest time), are held, each kept only when
+    it reduces the total shortfall, until the shortfall is gone. Quarters in which
+    the plan charges are held implicitly. While a top-up is wanted, the quarters
+    from the first planned top-up quarter to the one in which the content reaches
+    the top-up level are held too, so that the battery does not discharge what was
+    just bought. ``shortfall`` and ``reference_price`` describe what is left after
+    holding, before buying. Buying then goes on with the held set, and what is
+    bought in a quarter for a shortfall also holds the qualifying quarters between
+    them whose price is lower than the shortfall's (the House would otherwise use
+    up at a cheap price what it paid the conversion loss for).
 
     The planning is greedy and deterministic. Take the earliest shortfall that is
     still open. Among the qualifying quarters before it (and after any shortfall
@@ -367,7 +412,8 @@ def plan_charging(
     remains of it. With ``buffer_latched`` (the buffer charged in the quarter-hour
     before) it applies as long as the pessimistic plans still need any energy and
     the quarter-hour qualifies, so that the energy it already stored does not make
-    it pause.
+    it pause. The pessimistic runs hold the same way on their own (reduced-power)
+    model, so that each is consistent with itself.
     """
     now = _utc(now)
     horizon = now + MAX_HORIZON
@@ -395,7 +441,8 @@ def plan_charging(
 
     model = _Model(now, series, battery, running)
     n = len(series)
-    first = model.run([0.0] * n)
+    probe = _Model(now, series, battery, running)
+    first = _hold(probe, [0.0] * n, probe.run([0.0] * n))
     total_before = sum(first.shortfall)
     reference = (
         sum(s * series[i].price for i, s in enumerate(first.shortfall)) / total_before
@@ -473,6 +520,13 @@ def plan_charging(
         battery_at_sunrise=at_sunrise,
         reason=_reason(model, series, first, slots),
         buffer_power=buffer_power,
+        held=tuple(
+            _utc(series[i].start)
+            for i in range(n)
+            if series[i].qualifies
+            and battery.discharge_blocks
+            and (model.held[i] or planned[i] > _EPSILON)
+        ),
     )
 
 
@@ -490,10 +544,57 @@ def _plan_all(
     if wanted is not None:
         _plan_top_up(model, planned, wanted, end, latest)
         top_up_kwh = sum(planned)
-    run = model.run(planned)
+    run = _hold(model, planned, model.run(planned))
     if sum(run.shortfall) > _EPSILON:
         run = _cover(model, planned, run, latest)
     return top_up_kwh, run
+
+
+def _hold(model: _Model, planned: Sequence[float], run: _Run) -> _Run:
+    """Hold the battery (``model.held``, in place) in qualifying quarters whose
+    stored energy a dearer shortfall needs; the run with the holds.
+
+    Earliest shortfall first; the candidates are the qualifying quarters before it
+    with a lower price in which the plan does not charge, taken latest first (the
+    energy is held for the shortest time). Holding more never lowers the content,
+    so the shortfalls only fall as candidates are added: all candidates are tried
+    and, if that reduces the total shortfall, the fewest latest ones that reach
+    the same total are kept (found by bisection). No conversion loss is involved,
+    so there is no efficiency test."""
+    series = model.quarters
+    if not model.b.discharge_blocks:
+        return run
+    for s in range(len(series)):
+        if run.shortfall[s] <= 0.0:
+            continue
+        candidates = [
+            j
+            for j in range(s - 1, -1, -1)
+            if series[j].qualifies
+            and not model.held[j]
+            and planned[j] <= 0.0
+            and series[j].price < series[s].price - _EPSILON
+        ]
+
+        def total(count: int, candidates: list[int] = candidates) -> _Run:
+            for k, j in enumerate(candidates):
+                model.held[j] = k < count
+            return model.run(planned)
+
+        everything = total(len(candidates))
+        goal = sum(everything.shortfall)
+        if goal >= sum(run.shortfall) - _PROGRESS:
+            total(0)
+            continue
+        low, high = 0, len(candidates)  # high reaches the goal, low does not
+        while high - low > 1:
+            middle = (low + high) // 2
+            if sum(total(middle).shortfall) <= goal + _PROGRESS:
+                high = middle
+            else:
+                low = middle
+        run = total(high)
+    return run
 
 
 def _buffer_start(
@@ -541,7 +642,7 @@ def _buffer_start(
         top_phase = planned[0]
         top_total = sum(planned)
         deadlines.append(window)
-    run = counted.run(planned)
+    run = _hold(counted, planned, counted.run(planned))
     if sum(run.shortfall) > _EPSILON:
         deadlines.extend(i for i, s in enumerate(run.shortfall) if s > _EPSILON)
         _cover(counted, planned, run, latest=True)
@@ -642,8 +743,22 @@ def _plan_top_up(
 ) -> None:
     """Plan charging (in ``planned``, in place) until the content reaches
     ``content`` at some point before ``end``, or no step helps."""
+    window = sum(1 for q in model.quarters if _utc(q.start) < end)
+    model.top = (content, window)
+    try:
+        _top_up_steps(model, planned, content, window, latest)
+    finally:
+        model.fix_top_up(planned)
+
+
+def _top_up_steps(
+    model: _Model,
+    planned: list[float],
+    content: float,
+    window: int,
+    latest: bool,
+) -> None:
     series = model.quarters
-    window = sum(1 for q in series if _utc(q.start) < end)
     run = model.run(planned)
     # Every step that helps raises the peak by at least _PROGRESS and fills a
     # quarter, hits the target or reaches the level; the bound is a second guard.
@@ -729,15 +844,31 @@ def _cover_one(
     wanted = run.shortfall[target] / model.efficiency
     before_total = sum(run.shortfall)
     for j in candidates:
+        # What is bought at ``j`` is not to be used up before the shortfall by the
+        # qualifying quarters between them whose price is lower: hold them with it.
+        added = [
+            k
+            for k in range(j + 1, target)
+            if series[k].qualifies
+            and not model.held[k]
+            and planned[k] <= 0.0
+            and series[k].price < series[target].price - _EPSILON
+        ]
+        if model.b.discharge_blocks:
+            for k in added:
+                model.held[k] = True
+        else:
+            added = []
         room = model.max_grid(j) - planned[j]
         amount = _feasible(model, planned, j, min(wanted, room))
-        if amount <= _EPSILON:
-            continue
-        planned[j] += amount
-        trial = model.run(planned)
-        if sum(trial.shortfall) < before_total - _PROGRESS:
-            return trial
-        planned[j] -= amount
+        if amount > _EPSILON:
+            planned[j] += amount
+            trial = model.run(planned)
+            if sum(trial.shortfall) < before_total - _PROGRESS:
+                return trial
+            planned[j] -= amount
+        for k in added:
+            model.held[k] = False
     given_up.add(target)
     return None
 

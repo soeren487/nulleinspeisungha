@@ -234,17 +234,23 @@ class BatteryState:
         return None
 
 
+ASSUMED_MINIMUM_SOC = 10.0
+"""Percent counted as the floor while the GX reported no minimum (Victron default)."""
+
+
 def minimum_floor(state: BatteryState) -> tuple[float, str | None]:
     """The floor in percent the House counts from, and where it comes from.
 
     The active minimum when known, else the configured one (``"configured"``),
-    else 0 with no source.
+    else ``ASSUMED_MINIMUM_SOC`` with no source: the GX has not reported a minimum
+    yet (after a start its values arrive one by one), and counting the battery as
+    usable down to 0 % would overstate what it can give.
     """
     if state.active_minimum_soc is not None:
         return state.active_minimum_soc, "active"
     if state.configured_minimum_soc is not None:
         return state.configured_minimum_soc, "configured"
-    return 0.0, None
+    return ASSUMED_MINIMUM_SOC, None
 
 
 def parse_value(payload: bytes) -> float | None:

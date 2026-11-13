@@ -102,3 +102,15 @@ async def test_wrong_password_raises_auth_error(
     aioclient_mock.post(URL_LIMIT, status=401)
     with pytest.raises(DtuAuthError):
         await _client(hass).async_set_limit("1", 50)
+
+
+async def test_a_timeout_says_so(
+    hass: HomeAssistant, aioclient_mock: MagicMock
+) -> None:
+    """A timeout has no text of its own; the message must not end empty."""
+    aioclient_mock.post(URL_LIMIT, exc=TimeoutError())
+    with pytest.raises(DtuConnectionError, match=r"timed out after \d+ s"):
+        await _client(hass).async_set_limit("1", 50)
+    aioclient_mock.get("http://opendtu.local/api/system/status", exc=TimeoutError())
+    with pytest.raises(DtuConnectionError, match=r"timed out after \d+ s"):
+        await _client(hass)._get("/api/system/status")

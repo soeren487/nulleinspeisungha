@@ -158,6 +158,14 @@ HOUSE_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
 )
 
 
+def _reported_minimum(house: House) -> float | None:
+    """The minimum charge level the GX reported; unknown until it did."""
+    if house.battery is None:
+        return None
+    floor, source = minimum_floor(house.battery)
+    return floor if source is not None else None
+
+
 BATTERY_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
     HouseSensorDescription(
         key="battery_soc",
@@ -172,9 +180,7 @@ BATTERY_DESCRIPTIONS: tuple[HouseSensorDescription, ...] = (
         translation_key="battery_minimum_soc",
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=PERCENTAGE,
-        value_fn=lambda house: (
-            minimum_floor(house.battery)[0] if house.battery else None
-        ),
+        value_fn=lambda house: _reported_minimum(house),
     ),
     HouseSensorDescription(
         key="battery_power",

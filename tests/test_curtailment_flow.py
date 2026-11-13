@@ -434,6 +434,25 @@ async def test_failed_send_is_retried_on_the_next_run(
     assert len(dtu_network.limits()) == 4
 
 
+@pytest.mark.no_probe
+async def test_limit_answered_with_http_502_is_sent_again(
+    hass: HomeAssistant, dtu_network: DtuNetwork, freezer
+) -> None:
+    """A limit the DTU answered with a gateway error once goes out again."""
+    dtu = _dtu()
+    dtu.limit_http_status = 502
+    await _home(hass, dtu_network, dtu, grid=-500)
+    await _curtail(hass)
+    assert len(dtu_network.limits()) == 2
+    dtu.limit_http_status = 200
+    await _tick(hass, freezer)
+    assert len(dtu_network.limits()) == 4
+    assert {value for _, _, value in dtu_network.limits()} == {24}
+    _grid(hass, -10)
+    await _tick(hass, freezer)
+    assert len(dtu_network.limits()) == 4
+
+
 async def test_dtu_that_does_not_answer_gets_nothing(
     hass: HomeAssistant, dtu_network: DtuNetwork, freezer
 ) -> None:
