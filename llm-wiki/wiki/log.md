@@ -1,6 +1,7 @@
 # Wiki Update Log
 
 ## 2026-11-13
+* **Update**: [Requirements decisions](project/requirements-decisions.md) and this log: names of the battery-backed inverters moved to the private inventory. [Overview](project/overview.md): released up to 0.12.0.
 * **Update**: [Overview](project/overview.md): purpose without the sunrise rule, state (released up to 0.11.0, tickets 37 to 41 done and unreleased, 42 in work, 30 waiting, 16 and 23 closed), tools and CI.
 * **Update**: [Requirements decisions](project/requirements-decisions.md): rows superseded by shortfall planning and discharge block on demand marked; added discharge block on demand (37), top-up level (38), reason sensor and diagnostics (40), replay tool (41) and the deliberate feed-in setpoint of -100 W.
 * **Update**: [Development workflow](project/development-workflow.md): model per activity restated, CI, releases and the development tools added.
@@ -37,7 +38,7 @@
 * **Update**: [Overview](project/overview.md): tickets 01 to 04 done.
 * **Update**: Installation inventory (private): measured a DTU restart through the API on the real Büro DTU.
 * **Update**: [Development workflow](project/development-workflow.md): Sonnet now writes the tests, Haiku only runs them.
-* **Update**: Installation inventory (private): Büro 3 confirmed as HM-1200-4T; added API observations made while building ticket 02.
+* **Update**: Installation inventory (private): model of one battery-backed inverter confirmed; added API observations made while building ticket 02.
 * **Update**: [Overview](project/overview.md) now points to the spec and tickets under `.scratch/nulleinspeisung/`.
 * **Update**: Recorded the final interview round in [Requirements decisions](project/requirements-decisions.md); no decisions remain open.
 * **Update**: Recorded the third interview round in [Requirements decisions](project/requirements-decisions.md).

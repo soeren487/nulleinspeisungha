@@ -34,7 +34,7 @@ Terms are defined in [CONTEXT.md](../../../CONTEXT.md). The decisions below come
 | Stuck DTU | Web UI and API stay reachable, only radio fails. Restart through the DTU's authenticated API |
 | Update interval | Per house, 5 to 60 s, default 15 s |
 | Houses | Two today: the living house and the office and workshop house |
-| Battery-backed inverters | Two: "Büro 3" and "Haus 3", one per house, each fed by two Anker Solix E1600. They deliver a fixed 300 W from 21:00 to 06:00 as night support; the AC battery covers the rest of the load at any time |
+| Battery-backed inverters | Two, one per house (names in the private inventory), each fed by two Anker Solix E1600. They deliver a fixed 300 W from 21:00 to 06:00 as night support; the AC battery covers the rest of the load at any time |
 | DTU settings | The integration does not change inverter settings in OpenDTU (no toggling of polling). It never sends limit commands to an unreachable inverter |
 | Limit split | The same percentage for all PV inverters of a house, with a configurable floor (default 5 %). Battery-backed inverters are a separate group, curtailed first. Individual percentages per inverter may come later, so the split must be replaceable |
 | Stuck DTU detection | By day, when production must be possible but a DTU's inverters are unreachable or deliver no fresh data, restart it after 2 to 3 minutes. Hangs also begin at night and show when the inverters wake up. It happens up to several times a day |
