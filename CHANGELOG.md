@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The integration passes Home Assistant's `hassfest` check: `paho-mqtt` is required as a minimum version instead of a pinned one, and the help text of the DTU address no longer contains a URL.
+
 ## 0.12.0
 
 ### Changed

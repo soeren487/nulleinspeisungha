@@ -26,7 +26,7 @@
             "restart_wait": "Wartezeit nach Neustart (Sekunden)"
           },
           "data_description": {
-            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
+            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder opendtu.local",
             "password": "Administrator-Passwort der DTU (Benutzer admin)",
             "sun_angle": "Sonnenhöhe in Grad, ab der die Wechselrichter Daten liefern müssen (Standard 5)",
             "staleness_time": "Sekunden ohne frische Wechselrichter-Daten, nach denen die DTU als hängend gilt (Standard 120)",
@@ -44,7 +44,7 @@
             "restart_wait": "Wartezeit nach Neustart (Sekunden)"
           },
           "data_description": {
-            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
+            "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder opendtu.local",
             "password": "Administrator-Passwort der DTU (Benutzer admin). Leer lassen, um das gespeicherte Passwort zu behalten.",
             "sun_angle": "Sonnenhöhe in Grad, ab der die Wechselrichter Daten liefern müssen (Standard 5)",
             "staleness_time": "Sekunden ohne frische Wechselrichter-Daten, nach denen die DTU als hängend gilt (Standard 120)",
