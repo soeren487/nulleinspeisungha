@@ -1561,3 +1561,65 @@ def test_without_a_buffer_there_is_no_buffer_power() -> None:
 
     assert plan.buffer_power is None
     assert plan.buffer_kwh == 0.0
+
+
+# -- what a hold serves, and the top-up share of a slot (ticket 40) -----------
+
+
+def test_a_hold_names_the_dearer_shortfall_it_serves() -> None:
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=10.0)
+    )
+
+    assert plan.held_for is not None
+    assert plan.held_for.start == at("17:00")
+    assert plan.held_for.price == 0.256
+    assert plan.held_for.kwh > 0.0
+
+
+def test_a_hold_names_the_shortfall_also_when_the_battery_carries_it() -> None:
+    """30 %: the held energy covers the evening, the shortfall figure is 0, but the
+    hold is for the evening."""
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=30.0)
+    )
+
+    assert plan.shortfall == 0.0
+    assert plan.held_for is not None
+    # Without holding, the battery runs out in the evening's second hour.
+    assert plan.held_for.start == at("18:00")
+    assert plan.held_for.price == 0.256
+
+
+def test_without_a_hold_there_is_nothing_to_name() -> None:
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=95.0)
+    )
+
+    assert plan.held == ()
+    assert plan.held_for is None
+
+
+def test_a_cheaper_shortfall_is_not_what_a_hold_serves() -> None:
+    """Held quarters at 0.10, a shortfall at 0.04 only: no hold, nothing named."""
+    quarters = day(
+        ("00:00", "06:00", 0.10, True, 300.0),
+        ("06:00", "07:00", 0.04, False, 500.0),
+    )
+    plan = plan_charging(at("00:00"), quarters, battery(charge_level=20.0))
+
+    assert plan.held_for is None
+
+
+def test_the_top_up_share_of_the_slots_adds_up_to_the_top_up_energy() -> None:
+    plan = top_up_plan(top_up_day())
+
+    assert sum(s.top_up_kwh for s in plan.slots) == pytest.approx(plan.top_up_kwh)
+    assert all(s.top_up_kwh > 0.0 for s in plan.slots)
+
+
+def test_slots_for_shortfalls_have_no_top_up_share() -> None:
+    plan = real_plan()
+
+    assert plan.slots
+    assert all(s.top_up_kwh == 0.0 for s in plan.slots)

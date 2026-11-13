@@ -135,6 +135,18 @@ class PlannedSlot:
     """Energy drawn from the grid if charged here."""
     stored_kwh: float
     """Energy that ends up in the battery."""
+    top_up_kwh: float = 0.0
+    """Part of ``grid_kwh`` planned for the BatteryLife Top-up."""
+
+
+@dataclass(frozen=True, slots=True)
+class HeldFor:
+    """The shortfall the battery is held for: what would be missing at ``start``
+    (the quarter-hour's start) at ``price`` per kWh without any holding."""
+
+    start: datetime
+    kwh: float
+    price: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +183,10 @@ class ChargingPlan:
     """Starts of the qualifying quarter-hours in which the battery is held (a
     Discharge Block): those the planner holds back stored energy in for a dearer
     time, and those in which the plan charges. Empty without Discharge Blocks."""
+    held_for: HeldFor | None = None
+    """The first shortfall, without any holding, that lies after the first held
+    quarter-hour and is dearer than it: what a hold serves; ``None`` without holds
+    or when no such shortfall exists (a hold only keeps what the top-up bought)."""
 
     def is_due(self, now: datetime) -> bool:
         """Whether ``now`` lies inside a planned slot."""
@@ -442,7 +458,8 @@ def plan_charging(
     model = _Model(now, series, battery, running)
     n = len(series)
     probe = _Model(now, series, battery, running)
-    first = _hold(probe, [0.0] * n, probe.run([0.0] * n))
+    raw = probe.run([0.0] * n)
+    first = _hold(probe, [0.0] * n, raw)
     total_before = sum(first.shortfall)
     reference = (
         sum(s * series[i].price for i, s in enumerate(first.shortfall)) / total_before
@@ -476,9 +493,12 @@ def plan_charging(
     planned = [0.0] * n
     if preset > _EPSILON:
         planned[0] = preset
-    top_up_kwh, final = _plan_all(model, planned, wanted, top_end, latest=False)
+    top_up_kwh, final, top_part = _plan_all(
+        model, planned, wanted, top_end, latest=False
+    )
     if forced_by_shortfall:
         top_up_kwh = max(top_up_kwh - preset, 0.0)
+        top_part[0] = max(top_part[0] - preset, 0.0)
 
     buffer_kwh = 0.0
     if preset <= _EPSILON:
@@ -501,9 +521,17 @@ def plan_charging(
             price=series[i].price,
             grid_kwh=grid,
             stored_kwh=grid * model.root,
+            top_up_kwh=min(top_part[i], grid),
         )
         for i, grid in enumerate(planned)
         if grid > _EPSILON
+    )
+    held = tuple(
+        _utc(series[i].start)
+        for i in range(n)
+        if series[i].qualifies
+        and battery.discharge_blocks
+        and (model.held[i] or planned[i] > _EPSILON)
     )
     uncovered = sum(final.shortfall)
     at_sunrise = _content_at(series, final, sunrise) if sunrise is not None else None
@@ -520,13 +548,27 @@ def plan_charging(
         battery_at_sunrise=at_sunrise,
         reason=_reason(model, series, first, slots),
         buffer_power=buffer_power,
-        held=tuple(
-            _utc(series[i].start)
-            for i in range(n)
-            if series[i].qualifies
-            and battery.discharge_blocks
-            and (model.held[i] or planned[i] > _EPSILON)
+        held=held,
+        held_for=_held_for(series, raw, held),
+    )
+
+
+def _held_for(
+    series: Sequence[Quarter], raw: _Run, held: Sequence[datetime]
+) -> HeldFor | None:
+    """The first shortfall of ``raw`` (the run without any holding) after the first
+    held quarter-hour that is dearer than it."""
+    if not held:
+        return None
+    first = next(i for i, q in enumerate(series) if _utc(q.start) == held[0])
+    return next(
+        (
+            HeldFor(_utc(series[s].start), raw.shortfall[s], series[s].price)
+            for s in range(first + 1, len(series))
+            if raw.shortfall[s] > _EPSILON
+            and series[s].price > series[first].price + _EPSILON
         ),
+        None,
     )
 
 
@@ -536,18 +578,19 @@ def _plan_all(
     wanted: float | None,
     end: datetime,
     latest: bool,
-) -> tuple[float, _Run]:
+) -> tuple[float, _Run, list[float]]:
     """Plan the top-up (``wanted`` is its content, ``None`` for none), then the
     shortfalls, in ``planned`` in place. Returns the energy in ``planned`` after
-    the top-up and the final run."""
+    the top-up, the final run and the energy per quarter after the top-up."""
     top_up_kwh = 0.0
     if wanted is not None:
         _plan_top_up(model, planned, wanted, end, latest)
         top_up_kwh = sum(planned)
+    top_part = list(planned) if wanted is not None else [0.0] * len(planned)
     run = _hold(model, planned, model.run(planned))
     if sum(run.shortfall) > _EPSILON:
         run = _cover(model, planned, run, latest)
-    return top_up_kwh, run
+    return top_up_kwh, run, top_part
 
 
 def _hold(model: _Model, planned: Sequence[float], run: _Run) -> _Run:

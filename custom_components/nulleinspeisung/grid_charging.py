@@ -35,6 +35,7 @@ from .charging_planner import (
     plan_charging,
     slot_length,
 )
+from .charging_reason import ChargingReason, explain
 from .dc_battery import dc_battery_support, sensor_kwh
 from .price_source import PriceLevel
 
@@ -137,6 +138,8 @@ class GridCharging:
         """kWh of DC Battery Support until sunrise; ``None`` without sensors."""
         self.plan: ChargingPlan | None = None
         """The current Charging Plan; ``None`` until one could be made."""
+        self.inputs: tuple[Quarter, ...] = ()
+        """The quarter-hours the current plan was made from; empty without a plan."""
         self.deadline: datetime | None = None
         """The next sunrise, for the content shown at sunrise and the DC support."""
         self._planned_level: float | None = None
@@ -451,6 +454,7 @@ class GridCharging:
         self.forecast_in_use = False
         self.battery_at_sunrise = None
         self.top_up_wanted = False
+        self.inputs = ()
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
@@ -466,16 +470,18 @@ class GridCharging:
         share = self.forecast_share / 100.0
         top_up = self._top_up_for(now)
         self.top_up_wanted = top_up is not None
+        quarters = self._quarters(
+            now,
+            load,
+            {start: share * watts for start, watts in pv.items()}
+            if self.forecast_in_use
+            else {},
+            support or {},
+        )
+        self.inputs = tuple(quarters)
         self.plan = plan_charging(
             now,
-            self._quarters(
-                now,
-                load,
-                {start: share * watts for start, watts in pv.items()}
-                if self.forecast_in_use
-                else {},
-                support or {},
-            ),
+            quarters,
             BatteryModel(
                 capacity_kwh=capacity,
                 charge_level=level,
@@ -621,6 +627,28 @@ class GridCharging:
                 return GridChargingState.CHARGING
             return GridChargingState.WAITING
         return _STATE_OF_REASON[plan.reason]
+
+    def reason(self) -> ChargingReason:
+        """What Grid Charging does in the current quarter-hour, and why."""
+        house = self._house
+        publisher = house.grid_publisher
+        battery = house.battery
+        now = dt_util.utcnow()
+        return explain(
+            self.plan,
+            enabled=self.enabled,
+            in_control=publisher is not None and publisher.enabled,
+            battery_available=(
+                battery is not None
+                and battery.fresh
+                and battery.charge_level is not None
+            ),
+            dynamic_ess=battery is not None and bool(battery.dynamic_ess_mode),
+            now=now,
+            tz=dt_util.get_default_time_zone(),
+            max_charge_power=house.control.maximum_charge_power,
+            horizon_end=self.inputs[-1].start + SLOT if self.inputs else None,
+        )
 
     @property
     def discharge_block(self) -> bool:

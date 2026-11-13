@@ -30,6 +30,7 @@ from homeassistant.util import dt as dt_util
 
 from . import NulleinspeisungConfigEntry
 from .battery_gateway import minimum_floor
+from .charging_reason import ReasonCode
 from .const import DOMAIN
 from .coordinator import DtuCoordinator
 from .curtailment import ControlState
@@ -51,6 +52,8 @@ from .price_source import PriceLevel
 
 MAX_LISTED_SLOTS = 96
 """Planned slots listed in an attribute; a day has 96 quarter-hours."""
+MAX_LISTED_HELD = 192
+"""Held quarter-hours listed in an attribute: 48 hours."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -266,6 +269,7 @@ async def async_setup_entry(
             *(
                 [
                     GridChargingStateSensor(house),
+                    ChargingReasonSensor(house),
                     NextChargingStartSensor(house),
                     ChargingEnergySensor(house, "energy_to_buy"),
                     ChargingEnergySensor(house, "energy_missing"),
@@ -788,6 +792,7 @@ class NextChargingStartSensor(ChargingEntity, SensorEntity):
 
     _attr_translation_key = "next_charging_start"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _unrecorded_attributes = frozenset({"slots", "plan", "held"})
 
     def __init__(self, house: House) -> None:
         """Create the sensor."""
@@ -799,11 +804,69 @@ class NextChargingStartSensor(ChargingEntity, SensorEntity):
         return self.charging.next_start()
 
     @property
-    def extra_state_attributes(self) -> dict[str, list[str]]:
-        """The planned slots as ISO start times."""
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The plan as data: ``slots`` (ISO starts, for dashboards), ``plan`` (per
+        planned quarter-hour its start, end and grid energy, whether it belongs to
+        the top-up and whether the Safety Buffer is what charges in it) and
+        ``held`` (ISO starts of the held quarter-hours that are not planned)."""
         plan = self.charging.plan
-        slots = plan.slots[:MAX_LISTED_SLOTS] if plan is not None else ()
-        return {"slots": [slot.start.isoformat() for slot in slots]}
+        if plan is None:
+            return {"slots": [], "plan": [], "held": []}
+        now = dt_util.utcnow()
+        slots = plan.slots[:MAX_LISTED_SLOTS]
+        planned = {slot.start for slot in plan.slots}
+        return {
+            "slots": [slot.start.isoformat() for slot in slots],
+            "plan": [
+                {
+                    "start": slot.start.isoformat(),
+                    "end": slot.end.isoformat(),
+                    "grid_kwh": round(slot.grid_kwh, 3),
+                    "top_up": slot.top_up_kwh > 1e-6,
+                    "buffer": plan.buffer_kwh > 0.0 and slot.start <= now < slot.end,
+                }
+                for slot in slots
+            ],
+            "held": [start.isoformat() for start in plan.held if start not in planned][
+                :MAX_LISTED_HELD
+            ],
+        }
+
+
+class ChargingReasonSensor(ChargingEntity, SensorEntity):
+    """Why Grid Charging does what it does in the current quarter-hour."""
+
+    _attr_translation_key = "charging_reason"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = tuple(code.value for code in ReasonCode)  # type: ignore[assignment]
+
+    def __init__(self, house: House) -> None:
+        """Create the sensor."""
+        super().__init__(house, "charging_reason", "sensor")
+
+    @property
+    def native_value(self) -> str:
+        """The code of the reason."""
+        return self.charging.reason().code.value
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The sentence in English and German and the figures behind it."""
+        reason = self.charging.reason()
+
+        def iso(moment: datetime | None) -> str | None:
+            return moment.isoformat() if moment is not None else None
+
+        return {
+            "text": reason.text,
+            "text_de": reason.text_de,
+            "power_w": None if reason.power_w is None else round(reason.power_w),
+            "next_start": iso(reason.next_start),
+            "shortfall_kwh": reason.shortfall_kwh,
+            "shortfall_at": iso(reason.shortfall_at),
+            "shortfall_price": reason.shortfall_price,
+            "held_until": iso(reason.held_until),
+        }
 
 
 class ChargingEnergySensor(ChargingEntity, SensorEntity):

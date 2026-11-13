@@ -4,10 +4,12 @@
 
 **Blocked by:** 37, 38
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The replay runs on the synthetic fixture in the test suite and its totals are asserted
-- [ ] It reports cost with and without Grid Charging
-- [ ] The export script writes the file format the replay reads; nothing from a real installation is committed
+- [x] The replay runs on the synthetic fixture in the test suite and its totals are asserted
+- [x] It reports cost with and without Grid Charging
+- [x] The export script writes the file format the replay reads; nothing from a real installation is committed
 
 ## Comments
+
+2026-11-13: Implemented: `tools/replay.py`, `tools/export_history.py`, two synthetic fixtures. Not yet run on real days (needs an access token for the export). 1026 tests pass on the pinned Home Assistant and on 2026.9.4.

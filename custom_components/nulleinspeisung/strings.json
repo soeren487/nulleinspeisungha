@@ -326,6 +326,22 @@
           "charging": "Charging"
         }
       },
+      "charging_reason": {
+        "name": "Grid charging reason",
+        "state": {
+          "off": "Off",
+          "not_in_control": "Not in control",
+          "battery_unavailable": "Battery unavailable",
+          "dynamic_ess_active": "Dynamic ESS active",
+          "no_prices": "No prices",
+          "charging_plan": "Charging (plan)",
+          "charging_top_up": "Charging (top-up)",
+          "charging_safety_buffer": "Charging (Safety Buffer)",
+          "holding": "Holding the battery",
+          "waiting": "Waiting",
+          "idle": "Nothing to do"
+        }
+      },
       "next_charging_start": {
         "name": "Next charging start"
       },
