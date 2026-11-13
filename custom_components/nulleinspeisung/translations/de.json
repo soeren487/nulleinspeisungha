@@ -326,6 +326,22 @@
           "charging": "Lädt"
         }
       },
+      "charging_reason": {
+        "name": "Begründung Netzladen",
+        "state": {
+          "off": "Aus",
+          "not_in_control": "Nicht in Regelung",
+          "battery_unavailable": "Batterie nicht verfügbar",
+          "dynamic_ess_active": "Dynamic ESS aktiv",
+          "no_prices": "Keine Preise",
+          "charging_plan": "Lädt (Plan)",
+          "charging_top_up": "Lädt (Vollladung)",
+          "charging_safety_buffer": "Lädt (Sicherheitspuffer)",
+          "holding": "Hält die Batterie",
+          "waiting": "Wartet",
+          "idle": "Nichts zu tun"
+        }
+      },
       "next_charging_start": {
         "name": "Nächster Ladebeginn"
       },

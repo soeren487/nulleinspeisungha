@@ -11,6 +11,11 @@
 
 - A number "BatteryLife top-up level" ("Ziel der BatteryLife-Vollladung", 90 to 100 %, default 100 %) on the Grid charging device. The top-up counts as reached for the day when the charge level reaches it.
 
+- A sensor "Grid charging reason" ("Begründung Netzladen") says why the House charges, holds, waits or does nothing. Its state is a translated code, and its attributes `text` and `text_de` give one sentence in English and German with the figures behind it (`power_w`, `next_start`, `shortfall_kwh`, `shortfall_at`, `shortfall_price`, `held_until`).
+- The sensor "Next charging start" now also lists the whole plan (`plan`: start, end, grid energy, top-up and Safety Buffer per quarter-hour) and the held quarter-hours (`held`), so a dashboard can draw charging and holding over the price curve. These attributes are not recorded.
+- "Download diagnostics" for the integration: settings, each House's inputs to the last plan, the plan and its reason, the battery state and the DTU states, with addresses, passwords, tokens, portal ids, serials, coordinates and topics redacted.
+- For development: `tools/replay.py` replays recorded days through the planner and compares the cost with and without Grid Charging; `tools/export_history.py` exports such days from Home Assistant.
+
 ### Fixed
 
 - When Home Assistant stops, the setpoint and discharge overrides that the integration set are released on the GX.

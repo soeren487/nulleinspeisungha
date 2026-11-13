@@ -8,10 +8,12 @@
 
 **Blocked by:** 37, 38
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] The reason sensor shows a state and a sentence for each of: off, not in control, battery unavailable, no prices, charging (plan / top-up / safety buffer), holding, waiting, nothing to do
-- [ ] The plan's slots and held quarter-hours are available as attributes
-- [ ] Diagnostics can be downloaded and contain nothing that identifies the installation
+- [x] The reason sensor shows a state and a sentence for each of: off, not in control, battery unavailable, no prices, charging (plan / top-up / safety buffer), holding, waiting, nothing to do
+- [x] The plan's slots and held quarter-hours are available as attributes
+- [x] Diagnostics can be downloaded and contain nothing that identifies the installation
 
 ## Comments
+
+2026-11-13: Implemented: sensor `charging_reason`, attributes `plan` and `held` on the next-charging-start sensor, diagnostics. 1026 tests pass on the pinned Home Assistant and on 2026.9.4.
