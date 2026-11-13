@@ -8,11 +8,12 @@ the grid while a planned quarter-hour is on.
 
 from __future__ import annotations
 
+import logging
 from bisect import bisect_right
 from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import CALLBACK_TYPE, Event, EventStateChangedData, callback
 from homeassistant.helpers.event import (
@@ -20,27 +21,32 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
     async_track_utc_time_change,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from . import solar, sunrise_energy
+from . import solar
 from .battery_gateway import minimum_floor
 from .charging_planner import (
     MAX_HORIZON,
-    SLOT,
     BatteryModel,
     ChargingPlan,
     PlanReason,
     Quarter,
     TopUp,
     plan_charging,
-    slot_length,
 )
 from .charging_reason import ChargingReason, explain
+from .const import DOMAIN
 from .dc_battery import dc_battery_support, sensor_kwh
+from .listeners import ErrorLog, Listeners
 from .price_source import PriceLevel
+from .quarters import SLOT, quarter_start, slot_length
+from .surplus import forecast_surplus
 
 if TYPE_CHECKING:
     from .house import House
+
+_LOGGER = logging.getLogger(__name__)
 
 DEFAULT_CHARGE_TARGET = 100.0
 DEFAULT_BATTERY_EFFICIENCY = 78.0
@@ -68,6 +74,8 @@ PRICE_LEVEL_OPTIONS: dict[str, frozenset[PriceLevel]] = {
 """The choices of the owner and the Price Levels that qualify for each."""
 DEFAULT_PRICE_LEVELS = PRICE_LEVEL_CHEAP_AND_BELOW
 
+STORAGE_VERSION = 1
+
 REPLAN_LEVEL_STEP = 1.0
 """Percentage points the charge level may move before the plan is made again."""
 DC_ENERGY_STEP = 0.05
@@ -78,6 +86,11 @@ _PLAN_EPSILON = 1e-6
 """kWh below which a planned energy counts as none."""
 SETPOINT_INTERVAL = 10.0
 """Seconds between two recomputations of the wanted setpoint while charging."""
+
+
+def storage_key(house_unique_id: str) -> str:
+    """The storage key of what a House remembers of its BatteryLife Top-up."""
+    return f"{DOMAIN}.top_up_{house_unique_id}"
 
 
 class GridChargingState(StrEnum):
@@ -160,28 +173,35 @@ class GridCharging:
         """Whether the Safety Buffer was charging when the plan was last made."""
         self._buffer_latched = False
         """Whether the Safety Buffer was charging in the quarter-hour before."""
+        self._planned_above_target: bool | None = None
+        """Whether the charge level was at or above the Charge Target when the plan
+        was made: the plan is made again when that changes."""
+        self._plan_pending = False
+        """Whether a plan is asked for and will be made in the next turn of the loop;
+        the triggers of one moment share that one plan."""
+        self._refresh_wanted = False
+        """Whether the timer came while the plan was stale: the setpoint is
+        recomputed once the plan is made."""
+        self._errors = ErrorLog(_LOGGER)
+        self._store: Store[dict[str, Any]] = Store(
+            house.hass, STORAGE_VERSION, storage_key(house.config.unique_id)
+        )
+        self._saved: tuple[Any, ...] | None = None
+        """What the store holds of the top-up."""
         self._last_wanted: int | None = None
         self._started = False
         self._unsubs: list[CALLBACK_TYPE] = []
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners = Listeners(_LOGGER)
 
     # -- observers ---------------------------------------------------------
 
     @callback
     def async_add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
         """Call ``listener`` when the plan or the state may have changed."""
-        self._listeners.append(listener)
-
-        @callback
-        def remove() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return remove
+        return self._listeners.add(listener)
 
     def _notify(self) -> None:
-        for listener in list(self._listeners):
-            listener()
+        self._listeners.notify()
 
     # -- settings ----------------------------------------------------------
 
@@ -243,6 +263,51 @@ class GridCharging:
 
     # -- life cycle --------------------------------------------------------
 
+    async def async_load(self) -> None:
+        """Read what the House remembers of its top-up: the day it was reached and
+        the window it carries. Call before ``start``."""
+        data = await self._store.async_load()
+        if not data:
+            return
+        try:
+            day = date.fromisoformat(data["day"])
+            reached = bool(data["reached"])
+            top_up_end = _parse_moment(data.get("top_up_end"))
+            carried_end = _parse_moment(data.get("carried_end"))
+        except KeyError, TypeError, ValueError:
+            return
+        self._top_up_day = day
+        self._reached_today = reached
+        self._top_up_end = top_up_end
+        self._carried_end = carried_end
+        self._saved = self._top_up_state()
+
+    def _top_up_state(self) -> tuple[Any, ...]:
+        return (
+            self._top_up_day,
+            self._reached_today,
+            self._top_up_end,
+            self._carried_end,
+        )
+
+    def _persist(self) -> None:
+        """Store the day the top-up was reached and the carried window, when they
+        changed: a restart or a reload of the entry must not forget them."""
+        state = self._top_up_state()
+        if state == self._saved or self._top_up_day is None:
+            return
+        self._saved = state
+        self._house.hass.async_create_task(
+            self._store.async_save(
+                {
+                    "day": self._top_up_day.isoformat(),
+                    "reached": self._reached_today,
+                    "top_up_end": _isoformat(self._top_up_end),
+                    "carried_end": _isoformat(self._carried_end),
+                }
+            )
+        )
+
     def start(self) -> None:
         """Begin once the restored settings are in place."""
         house = self._house
@@ -278,6 +343,7 @@ class GridCharging:
     def stop(self) -> None:
         """Stop following and give the setpoint override back, if it was set."""
         self._started = False
+        self._plan_pending = False
         for unsub in self._unsubs:
             unsub()
         self._unsubs = []
@@ -291,13 +357,28 @@ class GridCharging:
     # -- triggers ----------------------------------------------------------
 
     @callback
+    def _request_plan(self) -> None:
+        """Ask for a plan in the next turn of the loop. The prices, the Expected
+        Load, the PV Forecast, the clock and the sensors of one moment then share
+        one run."""
+        if self._plan_pending or not self._started:
+            return
+        self._plan_pending = True
+        self._house.hass.loop.call_soon(self._make_requested_plan)
+
+    @callback
+    def _make_requested_plan(self) -> None:
+        if self._plan_pending and self._started:
+            self._replan()
+
+    @callback
     def _on_prices(self) -> None:
-        self._replan()
+        self._request_plan()
 
     @callback
     def _on_inputs(self) -> None:
         """The PV Forecast or the Expected Load changed."""
-        self._replan()
+        self._request_plan()
 
     @callback
     def _on_dc_sensor(self, event: Event[EventStateChangedData]) -> None:
@@ -305,11 +386,11 @@ class GridCharging:
         entity_id = event.data["entity_id"]
         now = sensor_kwh(event.data["new_state"]) or 0.0
         if abs(now - self._planned_dc.get(entity_id, 0.0)) >= DC_ENERGY_STEP:
-            self._replan()
+            self._request_plan()
 
     @callback
     def _on_quarter(self, _now: datetime) -> None:
-        self._replan()
+        self._request_plan()
 
     @callback
     def _on_control(self) -> None:
@@ -321,7 +402,6 @@ class GridCharging:
     def _on_battery(self) -> None:
         battery = self._house.battery
         level = battery.charge_level if battery is not None else None
-        plan = self.plan
         reached_flipped = self._track_top_up_level(level, dt_util.utcnow())
         if (
             level is not None
@@ -330,14 +410,10 @@ class GridCharging:
                 or self._planned_level is None
                 or abs(level - self._planned_level) >= REPLAN_LEVEL_STEP
                 or self.battery_floor() != self._planned_floor
-                or (
-                    plan is not None
-                    and plan.reason is not PlanReason.AT_TARGET
-                    and level >= self.charge_target
-                )
+                or (level >= self.charge_target) != self._planned_above_target
             )
         ) or (level is None and self.plan is not None):
-            self._replan()
+            self._request_plan()
         else:
             self._evaluate()
             self._notify()
@@ -426,9 +502,22 @@ class GridCharging:
     # -- planning ----------------------------------------------------------
 
     def _replan(self) -> None:
-        self._make_plan(dt_util.utcnow())
-        self._evaluate()
+        refresh, self._refresh_wanted = self._refresh_wanted, False
+        self._plan_safely(dt_util.utcnow())
+        self._evaluate(refresh=refresh)
         self._notify()
+
+    def _plan_safely(self, now: datetime) -> None:
+        """Make the plan; when that fails, log it (once) and keep the previous."""
+        self._plan_pending = False
+        saved = dict(self.__dict__)
+        try:
+            self._make_plan(now)
+        except Exception as err:
+            self.__dict__.update(saved)
+            # Not asked again for every report of the GX.
+            self._plan_quarter = quarter_start(now)
+            self._errors.exception("Planning the charging", err)
 
     def _make_plan(self, now: datetime) -> None:
         house = self._house
@@ -437,7 +526,7 @@ class GridCharging:
         capacity = house.config.battery_capacity
         level = battery.charge_level if battery is not None else None
         self._track_top_up_level(level, now)
-        quarter = sunrise_energy.quarter_start(now)
+        quarter = quarter_start(now)
         if quarter != self._plan_quarter:
             # The latch: the Safety Buffer goes on if it charged in the quarter-hour
             # before, instead of being decided afresh at the boundary.
@@ -458,10 +547,12 @@ class GridCharging:
         if prices is None or capacity is None or level is None:
             self.plan = None
             self._planned_level = None
+            self._persist()
             self._buffer_now = False
             return
         control = house.control
         self._planned_level = level
+        self._planned_above_target = level >= self.charge_target
         self._planned_floor = self.battery_floor()
         self._planned_power = control.maximum_charge_power
         forecast = house.forecast
@@ -500,6 +591,7 @@ class GridCharging:
         )
         self.battery_at_sunrise = self.plan.battery_at_sunrise
         self._buffer_now = self.buffer_forcing
+        self._persist()
 
     def _running_slot(self, now: datetime) -> datetime | None:
         """The start of the planned quarter-hour that ``now`` is in, if any."""
@@ -525,7 +617,7 @@ class GridCharging:
         length = slot_length(points)
         starts = [p.start for p in points]
         qualifying = PRICE_LEVEL_OPTIONS[self.price_levels]
-        first = sunrise_energy.quarter_start(now)
+        first = quarter_start(now)
         quarters: list[Quarter] = []
         for i in range(int(MAX_HORIZON / SLOT)):
             start = first + i * SLOT
@@ -567,7 +659,7 @@ class GridCharging:
             return {}
         pv = {slot.start: slot.watts for slot in forecast.slots}
         if self.deadline is not None:
-            self.forecast_surplus = sunrise_energy.forecast_surplus(
+            self.forecast_surplus = forecast_surplus(
                 self.deadline, load, pv, self.forecast_share / 100.0
             )
         return pv
@@ -721,16 +813,16 @@ class GridCharging:
         if not self._started:
             return
         now = dt_util.utcnow()
-        stale = (
-            self.plan is not None
-            and self._plan_quarter != sunrise_energy.quarter_start(now)
-        )
+        stale = self.plan is not None and self._plan_quarter != quarter_start(now)
         if stale:
             # A report at the very start of a quarter-hour can come before the
             # replan of the boundary: the plan still has the slot that just ended
-            # and would release the override for a moment.
-            self._make_plan(now)
-            self._notify()
+            # and would release the override for a moment. The plan is made in
+            # the next turn of the loop, together with what else changed at this
+            # boundary, and evaluates afterwards; until then nothing is changed.
+            self._refresh_wanted = self._refresh_wanted or refresh
+            self._request_plan()
+            return
         overrides = self._house.wanted_overrides
         wanted: float | None = None
         if self._state_at(now) is GridChargingState.CHARGING:
@@ -785,3 +877,16 @@ class GridCharging:
         if slot is None or slot.grid_kwh - plan.buffer_kwh > _PLAN_EPSILON:
             return maximum
         return min(plan.buffer_power, maximum)
+
+
+def _isoformat(moment: datetime | None) -> str | None:
+    return moment.isoformat() if moment is not None else None
+
+
+def _parse_moment(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    moment = dt_util.parse_datetime(value)
+    if moment is None:
+        raise ValueError(value)
+    return dt_util.as_utc(moment)

@@ -14,10 +14,11 @@ that the integration's package (which imports Home Assistant) is not imported.
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import importlib
 import json
 import math
 import sys
+import types
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -44,17 +45,18 @@ _EPSILON = 1e-9
 
 
 def load_planner() -> Any:
-    """The planner module, loaded by file path (no Home Assistant needed)."""
-    name = "nulleinspeisung_charging_planner"
-    if name in sys.modules:
-        return sys.modules[name]
-    spec = importlib.util.spec_from_file_location(name, PLANNER_FILE)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {PLANNER_FILE}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module  # dataclasses look their module up here
-    spec.loader.exec_module(module)
-    return module
+    """The planner module, loaded without Home Assistant.
+
+    The package ``__init__`` would import Home Assistant, so a stand-in package
+    with the same directory is registered: the planner and the small modules it
+    imports (``quarters``) load from there.
+    """
+    package = "nulleinspeisung_planner"
+    if package not in sys.modules:
+        stand_in = types.ModuleType(package)
+        stand_in.__path__ = [str(PLANNER_FILE.parent)]
+        sys.modules[package] = stand_in
+    return importlib.import_module(f"{package}.charging_planner")
 
 
 planner = load_planner()

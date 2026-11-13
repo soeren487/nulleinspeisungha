@@ -6,6 +6,7 @@
 
 - **The Discharge Block now follows the Charging Plan instead of the Price Level.** Tibber's Price Level compares with the days before, not with an absolute price: from 2026-11-11 21:30 it was "cheap" or "very cheap" for more than 39 hours, and the battery stood at 95 to 98 % all that time while the House bought about 30 kWh from the grid. The battery is now held in a cheap quarter-hour only when its energy is needed later at a higher price and would be missing there; the latest cheap quarter-hours are held first, only as far as needed, and what the plan buys is kept until the dearer quarter-hour. In a long cheap period with nothing dearer waiting, the battery discharges as usual.
 - **The BatteryLife top-up now charges to 100 % by default** (was 95 %); the owner's BatteryLife lowered its minimum more reliably that way. The battery is held from the first top-up quarter-hour until the level is reached, so it does not discharge what was just bought.
+- Prices, Expected Load, PV Forecast, the clock and the sensors share one planning run per House per moment, and the planner is about two to three times faster (a 48-hour plan takes 3 to 76 ms where it took 6 to 158 ms on the development machine; results unchanged).
 
 ### Added
 
@@ -22,12 +23,23 @@
 - The AC battery's minimum charge level no longer shows 0 % for a moment after a start: it is unknown until the GX reports it, and the plan counts from 10 % meanwhile.
 - Devices below the House or the DTU are linked the way Home Assistant now asks for, so the deprecation warning about `via_device` is gone.
 - A DTU request that times out now says "timed out after 10 s" instead of an empty message.
+- A full battery on a sunny day no longer makes Grid Charging plan again on every message of the GX (one to three a second); it plans again when the charge level crosses the Charge Target.
+- A failing planner run, or a failing listener of the GX, the grid publisher or Grid Charging, no longer stops the other listeners. The previous plan stays and the error is logged once.
+- The BatteryLife top-up reached on a day is remembered over a restart and a reload, so no second top-up is planned that day.
+- After a restart, Inverter limits below 100 % that a DTU still reports are taken over by the House, so they are raised again while an AC Battery covers the load.
+- Disabling or removing the integration gives the Inverters the House had limited 100 % again. A reload leaves the limits, and so does a stop of Home Assistant unless the House is set to give 100 % on failure.
+- The reason "at target" is no longer shown for a low battery when an earlier shortfall was given up for the efficiency and a later one could only be covered by quarter-hours after it.
+- DC Battery Support in the quarter-hour that contains the sunrise is spread over the whole quarter-hour.
+- Repair notifications: an issue that flaps is sent at most once an hour.
+- Reconfiguring a DTU keeps the stored password when the field is left empty. Reconfiguring a House does not ask the GX again when host and port are unchanged.
 
 ### Good to know
 
 - A battery reports 100 % only at the end of absorption, so charging near the end is slow. The top-up stays wanted until the level is really reported; the Charge Target still caps it. Set the level to 95 % for the previous behaviour.
 - The top-up to 100 % buys about a quarter more energy than the one to 95 %.
 - "Discharge block active" will be on much less often than before.
+- With "hold" as failure behaviour the limits stay when Home Assistant stops, and the House takes them over again at the next start, so a restart does not export. An Inverter that a DTU reports at 0 % is not taken over.
+- Restart Home Assistant after updating.
 
 ## 0.11.0
 

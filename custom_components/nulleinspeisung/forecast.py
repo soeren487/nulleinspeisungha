@@ -36,6 +36,7 @@ from .forecast_model import (
     learn,
 )
 from .forecast_source import IrradiancePoint, OpenMeteoClient, OpenMeteoError
+from .quarters import SLOT, quarter_start
 
 if TYPE_CHECKING:
     from .house import House
@@ -52,7 +53,6 @@ KEEP_HISTORY = timedelta(days=60)
 """How long production records are kept."""
 KEEP_IRRADIANCE = timedelta(days=2)
 """How long past irradiance is kept, so that finished slots can be recorded."""
-SLOT = timedelta(minutes=15)
 MIN_COVERED = SLOT.total_seconds() / 2
 """Seconds of a quarter-hour that samples must cover for it to be recorded."""
 MAX_SAMPLE_COVER = 30.0
@@ -75,12 +75,6 @@ class _Slot:
     bad: bool = False
     """A PV Inverter was unknown at some moment: the quarter-hour is not recorded."""
     curtailed: bool = False
-
-
-def slot_start(moment: datetime) -> datetime:
-    """The start of the quarter-hour containing ``moment``."""
-    moment = dt_util.as_utc(moment)
-    return moment.replace(minute=moment.minute // 15 * 15, second=0, microsecond=0)
 
 
 def storage_key(house_unique_id: str) -> str:
@@ -170,7 +164,7 @@ class HouseForecast:
     @property
     def current(self) -> ForecastSlot | None:
         """The PV Forecast of the quarter-hour now."""
-        start = slot_start(dt_util.utcnow())
+        start = quarter_start(dt_util.utcnow())
         return next((s for s in self.slots if s.start == start), None)
 
     def energy_kwh(self, day: date) -> float | None:
@@ -293,7 +287,7 @@ class HouseForecast:
 
     def _roll(self, now: datetime) -> None:
         """Finish the observed quarter-hour if ``now`` is in a later one."""
-        start = slot_start(now)
+        start = quarter_start(now)
         slot = self._slot
         if slot is not None and slot.start >= start:
             return

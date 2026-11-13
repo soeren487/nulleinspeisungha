@@ -194,7 +194,7 @@ class House:
         self.prices = prices
         """The House's Tibber prices; ``None`` without a Tibber home and token.
 
-        Later features read ``prices.current`` and ``prices.future`` from here.
+        Grid Charging and the sensors read ``prices.current`` and ``prices.prices``.
         """
         self.gateway = gateway
         """The House's AC Battery; ``None`` without one."""
@@ -219,7 +219,7 @@ class House:
         self.forecast = forecast
         """The House's PV Forecast; ``None`` without PV Inverters.
 
-        Later features read ``forecast.future`` and ``forecast.usable`` from here.
+        Grid Charging and the sensors read ``forecast.slots`` and ``forecast.usable``.
         """
         if forecast is not None:
             forecast.attach(self)
@@ -230,8 +230,8 @@ class House:
         self.expected_load = ExpectedLoad(hass, self)
         """The House's Expected Load; every House has one.
 
-        Later features read ``expected_load.at(start)`` and
-        ``expected_load.upcoming()`` from here.
+        Grid Charging and the sensors read ``expected_load.at(start)`` and
+        ``expected_load.upcoming()``.
         """
 
     @property

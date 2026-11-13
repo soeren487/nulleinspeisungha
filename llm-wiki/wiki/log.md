@@ -1,5 +1,10 @@
 # Wiki Update Log
 
+## 2026-11-13
+* **Update**: [Overview](project/overview.md): purpose without the sunrise rule, state (released up to 0.11.0, tickets 37 to 41 done and unreleased, 42 in work, 30 waiting, 16 and 23 closed), tools and CI.
+* **Update**: [Requirements decisions](project/requirements-decisions.md): rows superseded by shortfall planning and discharge block on demand marked; added discharge block on demand (37), top-up level (38), reason sensor and diagnostics (40), replay tool (41) and the deliberate feed-in setpoint of -100 W.
+* **Update**: [Development workflow](project/development-workflow.md): model per activity restated, CI, releases and the development tools added.
+
 ## 2026-11-10
 * **Update**: [Requirements decisions](project/requirements-decisions.md): steady charging while the safety buffer applies (ticket 36).
 

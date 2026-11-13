@@ -125,6 +125,13 @@ DTU_SCHEMA = vol.Schema(
         ),
     }
 )
+DTU_RECONFIGURE_SCHEMA = vol.Schema(
+    {
+        (vol.Optional(CONF_PASSWORD) if key == CONF_PASSWORD else key): value
+        for key, value in DTU_SCHEMA.schema.items()
+    }
+)
+"""The same, but an empty password keeps the stored one."""
 
 OPTIONS_SCHEMA = vol.Schema(
     {
@@ -270,7 +277,13 @@ class DtuSubentryFlow(ConfigSubentryFlow):
         subentry = self._get_reconfigure_subentry()
         errors: dict[str, str] = {}
         if user_input is not None:
-            identity = await self._async_identify(user_input, errors)
+            # An empty password keeps the stored one; it never goes back into the form.
+            entered = {
+                **user_input,
+                CONF_PASSWORD: user_input.get(CONF_PASSWORD)
+                or subentry.data[CONF_PASSWORD],
+            }
+            identity = await self._async_identify(entered, errors)
             if identity is not None:
                 if identity.serial != subentry.unique_id:
                     return self.async_abort(reason="wrong_dtu")
@@ -278,12 +291,12 @@ class DtuSubentryFlow(ConfigSubentryFlow):
                     self._get_entry(),
                     subentry,
                     title=identity.hostname,
-                    data=self._data(user_input, identity),
+                    data=self._data(entered, identity),
                 )
         return self.async_show_form(
             step_id="reconfigure",
             data_schema=self.add_suggested_values_to_schema(
-                DTU_SCHEMA,
+                DTU_RECONFIGURE_SCHEMA,
                 user_input
                 or {
                     key: value
@@ -666,8 +679,18 @@ class HouseSubentryFlow(ConfigSubentryFlow):
                 errors[CONF_GRID_METER_TOPIC] = "invalid_topic"
             if errors:
                 return self._show_ac_battery_form(user_input, errors)
+            current = self._current()
             try:
-                portal_id = await async_probe(host, port)
+                if (
+                    self._is_reconfigure
+                    and host == current.get(CONF_GX_HOST)
+                    and port == int(current.get(CONF_GX_PORT, DEFAULT_GX_PORT))
+                    and current.get(CONF_GX_PORTAL_ID)
+                ):
+                    # The same GX as before: not asked again (it may be down).
+                    portal_id = str(current[CONF_GX_PORTAL_ID])
+                else:
+                    portal_id = await async_probe(host, port)
             except GxConnectionError:
                 errors[CONF_GX_HOST] = "cannot_connect"
             else:

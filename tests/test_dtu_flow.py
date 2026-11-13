@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import voluptuous as vol
 from aiohttp.client_exceptions import ClientConnectionError
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import HomeAssistant
@@ -540,3 +541,36 @@ async def test_added_and_reconfigured_dtu_store_mac(
     )
     assert result["reason"] == "reconfigure_successful"
     assert entry.subentries[subentry_id].data[CONF_MAC] == "aabbcc000077"
+
+
+async def test_reconfigure_with_an_empty_password_keeps_the_stored_one(
+    hass: HomeAssistant, dtu_network: DtuNetwork
+) -> None:
+    """The password is not asked for again when only something else changes."""
+    dtu = SimDtu.default()
+    dtu.base_url = "http://192.168.1.50"
+    dtu_network.add(dtu)
+    dtu_network.apply()
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.subentries.async_init(
+        (entry.entry_id, SUBENTRY_TYPE_DTU), context={"source": "user"}
+    )
+    await hass.config_entries.subentries.async_configure(
+        result["flow_id"], {CONF_URL: "192.168.1.50", CONF_PASSWORD: "password1"}
+    )
+    subentry_id = next(iter(entry.subentries))
+
+    result = await entry.start_subentry_reconfigure_flow(hass, subentry_id)
+    password = next(k for k in result["data_schema"].schema if k == CONF_PASSWORD)
+    assert not isinstance(password, vol.Required)
+    result = await hass.config_entries.subentries.async_configure(
+        result["flow_id"],
+        {CONF_URL: "192.168.1.50", CONF_PASSWORD: "", "sun_angle": 7.0},
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    data = entry.subentries[subentry_id].data
+    assert data[CONF_PASSWORD] == "password1"
+    assert data["sun_angle"] == 7.0

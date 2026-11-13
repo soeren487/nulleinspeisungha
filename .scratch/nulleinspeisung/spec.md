@@ -10,7 +10,7 @@ I run two Houses from one Home Assistant, each with its own grid connection, Inv
 
 ## Solution
 
-A Home Assistant custom integration called "Nulleinspeisung". DTUs are connected once; each Inverter is then assigned to a House. Per House the integration regulates the Inverter Limits so that Grid Power stays at the Feed-in Setpoint, giving the AC Battery priority over export and export priority over Curtailment. It restarts a Stuck DTU by itself. It hands the true Grid Power to the AC Battery, charges the battery from the grid in the cheapest low-priced quarter-hours before sunrise, keeps it from discharging while prices are low, and buys less when the next day's sun will fill the battery anyway.
+A Home Assistant custom integration called "Nulleinspeisung". DTUs are connected once; each Inverter is then assigned to a House. Per House the integration regulates the Inverter Limits so that Grid Power stays at the Feed-in Setpoint, giving the AC Battery priority over export and export priority over Curtailment. It restarts a Stuck DTU by itself. It hands the true Grid Power to the AC Battery, plans the battery's content over all known prices and buys beforehand, in the cheapest low-priced quarter-hours, the energy it would otherwise have to buy at prices it cannot choose (a shortfall), counting only part of the sun's forecast. It tops the battery up to a set level once a day so that BatteryLife lowers its minimum, starts charging in time with a Safety Buffer when the sun stays away, and keeps the battery from discharging only in the cheap quarter-hours whose energy a dearer quarter-hour needs.
 
 ## User Stories
 
@@ -68,9 +68,9 @@ A Home Assistant custom integration called "Nulleinspeisung". DTUs are connected
 41. As the owner, I want the integration to hand the true Grid Power to the AC Battery, so that Node-RED is no longer needed and the battery's own statistics are correct.
 42. As the owner, I want the AC Battery to stop receiving a value when the Grid Meter fails, so that it goes idle instead of acting on a stale value.
 43. As the owner, I want to enter one Tibber token and choose a Tibber home per House, so that each House uses its own prices.
-44. As the owner, I want Grid Charging to run in the cheapest quarter-hours before sunrise, so that the missing energy is bought at the lowest price.
+44. As the owner, I want Grid Charging to run in the cheapest qualifying quarter-hours before a period in which the battery cannot carry the House, so that the missing energy is bought at the lowest price.
 45. As the owner, I want to choose which Price Levels qualify, defaulting to cheap and very cheap, so that I never charge at normal or high prices.
-46. As the owner, I want a Charge Target per House, defaulting to 100 %, so that I decide how full the battery should be by sunrise.
+46. As the owner, I want a Charge Target per House, defaulting to 100 %, so that I decide how full Grid Charging may fill the battery.
 47. As the owner, I want the Charging Plan to cover the whole night across midnight, so that cheap hours after midnight are used.
 48. As the owner, I want the Charging Plan recomputed when new prices arrive and as the charge level changes, so that it stays correct.
 49. As the owner, I want to see the planned charging quarter-hours and the energy to be bought, so that I can check the plan.
@@ -84,7 +84,7 @@ A Home Assistant custom integration called "Nulleinspeisung". DTUs are connected
 ### Forecast
 
 56. As the owner, I want to enter a location per House, so that sunrise and the PV Forecast are computed for the right place.
-57. As the owner, I want Grid Charging to buy only what the battery must hold at sunrise to bridge the time until the sun covers the House, so that I do not pay for energy the sun delivers for free.
+57. As the owner, I want Grid Charging to buy only the shortfall, the energy the battery cannot carry in quarter-hours that do not qualify, after counting the PV Forecast, so that I do not pay for energy the sun delivers for free.
 58. As the owner, I want the PV Forecast derived from an irradiance forecast and my Inverters' own production history, so that I do not have to describe every panel.
 59. As the owner, I want Curtailment periods excluded from that history, so that throttled production does not distort the forecast.
 60. As the owner, I want the Expected Load learned from the House's own past, so that the plan fits how the House is used.
@@ -146,6 +146,7 @@ Each module hides one external system or one decision behind a small interface, 
 - **Curtailment off.** All Inverters of the House are set to 100 % once.
 - **Reported Grid Power.** Always the true Grid Power; it is published on every meter update. Grid Charging does not alter it.
 - **Grid Charging mechanism.** Charging is commanded through Victron's volatile setpoint override, rewritten every cycle and released when not charging. The Discharge Block uses the volatile override of the maximum discharge power, set to zero and released afterwards, so the stored value is never changed. Both were tested on the real system: they are honoured and do not expire, so the integration releases them itself, also at start. The dead-man is the Reported Grid Power: when the integration stops publishing it, the grid meter driver exits after 60 s. A discharge limit of 0 leaves about 47 W of discharge.
+- **Charging quarter-hour.** A quarter-hour in which the plan charges charges at the Maximum Charge Power (or at the Safety Buffer's power, see Safety Buffer) for as long as the plan keeps that quarter-hour. PV surplus inside a charging quarter-hour is not counted by the plan.
 - **Charging Plan.** The plan is the result of shortfall planning (above): the quarter-hours to charge in and the energy to buy. It is recomputed when prices arrive, every quarter-hour, and when the charge level deviates from the plan.
 - **Battery Efficiency.** A setting per House, default 78 %, as a round trip. It enters Grid Charging twice. Worth: a quarter-hour qualifies only if its price is at most the Battery Efficiency times the Reference Price, because of every kWh bought only that share comes back. Amount: to raise the battery by an amount of energy, that amount divided by the square root of the Battery Efficiency has to be bought, the charging half of the loss.
 - **Reference Price.** The mean price of the shortfall before planning, weighted by energy. Unknown when there is no shortfall. The worth test compares with each shortfall's own price.
@@ -182,7 +183,7 @@ Each module hides one external system or one decision behind a small interface, 
 
 - A good test states what the owner would observe: given these device readings and settings, these commands go out and these entities show this. It does not assert on internal calls or structure.
 - The primary seam is Home Assistant itself. Tests set up the integration in a test Home Assistant with simulated DTUs and web services at the HTTP boundary, a simulated broker at the MQTT boundary, an ordinary sensor entity as the Grid Meter, and controlled time. They assert on outgoing HTTP requests, outgoing MQTT messages, entity states and repair issues.
-- The pure decisions are additionally tested directly, because their input combinations are too many to drive through Home Assistant: DTU health and restart policy, Curtailment controller, limit split, Charging planner, energy needed at sunrise, and the two learned models.
+- The pure decisions are additionally tested directly, because their input combinations are too many to drive through Home Assistant: DTU health and restart policy, Curtailment controller, limit split, Charging planner (shortfall planning, Discharge Block, BatteryLife Top-up, Safety Buffer), and the two learned models.
 - Config and options flows are tested through Home Assistant's flow API.
 - There is no prior art in the repository; these are the first tests. The tooling is the standard test harness for custom integrations.
 - Only the production Home Assistant exists. Against the real system, reading is allowed at any time. Writing (limits, DTU restarts, Victron settings) happens only in sessions the owner approves each time, starting with one Inverter he names.

@@ -7,7 +7,8 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlowResult, ConfigSu
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.nulleinspeisung import battery_gateway
+from custom_components.nulleinspeisung import battery_gateway, config_flow
+from custom_components.nulleinspeisung.battery_gateway import GxConnectionError
 from custom_components.nulleinspeisung.const import SUBENTRY_TYPE_HOUSE
 from tests.conftest import DtuNetwork, SimDtu, SimGx, SimHouse, register_gx, setup_entry
 from tests.test_house_flow import (
@@ -265,3 +266,46 @@ async def test_reconfigure_keeps_and_changes_the_topic(
     assert result["type"] is FlowResultType.ABORT
     await hass.async_block_till_done()
     assert _house(entry, "Home").data["grid_meter_topic"] == "grid/new"
+
+
+async def test_reconfigure_does_not_probe_a_gx_whose_address_did_not_change(
+    hass: HomeAssistant, dtu_network: DtuNetwork, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A GX that is down while only the capacity changes must not stop the change;
+    a different address is probed."""
+    gx = SimGx("gx-home.test")
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        SimDtu.default(),
+        houses=[SimHouse("Home", gx=gx, capacity=9.6)],
+    )
+    probed: list[tuple[str, int]] = []
+
+    async def probe(host: str, port: int) -> str:
+        probed.append((host, port))
+        raise GxConnectionError("down")
+
+    monkeypatch.setattr(config_flow, "async_probe", probe)
+
+    result = await _reconfigure(hass, entry, _house(entry, "Home"))
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": "gx-home.test", "gx_port": 1883, "battery_capacity": 12},
+    )
+    assert result["type"] is FlowResultType.ABORT
+    await hass.async_block_till_done()
+    assert probed == []
+    assert _house(entry, "Home").data["battery_capacity"] == 12
+    assert _house(entry, "Home").data["gx_portal_id"] == gx.portal_id
+
+    result = await _reconfigure(hass, entry, _house(entry, "Home"))
+    result = await _next(
+        hass,
+        result,
+        {"gx_host": "gx-other.test", "gx_port": 1883, "battery_capacity": 12},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"gx_host": "cannot_connect"}
+    assert probed == [("gx-other.test", 1883)]

@@ -106,7 +106,7 @@ async def test_the_diagnostics_hold_the_plan_and_no_identifying_value(
 
     house = diagnostics["houses"][0]
     charging = house["grid_charging"]
-    assert house["name"] == "Home"
+    assert house["name"] == "house-1"
     assert house["battery"]["charge_level"] == 100.0
     assert charging["settings"]["enabled"] is True
     assert charging["plan"]["held"]
@@ -134,3 +134,41 @@ async def test_the_diagnostics_hold_the_plan_and_no_identifying_value(
     data = diagnostics["entry"]["subentries"][0]["data"]
     assert data["password"] != SECRETS["dtu_password"]
     assert diagnostics["entry"]["options"]["tibber_token"] != TIBBER_TOKEN
+
+
+async def test_the_diagnostics_hide_the_grid_meter_the_sensors_and_the_house_title(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+) -> None:
+    """A default Shelly entity id holds the device's MAC; a title may hold a name."""
+    meter = "sensor.shellyem3_secretmac_channel_a_power"
+    sensors = ["sensor.secretmac_a_energy", "sensor.secretmac_b_energy"]
+    title = "Family Secretname House"
+    hass.states.async_set(meter, "0", {"unit_of_measurement": "W"})
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        _dtu(),
+        houses=[
+            SimHouse(
+                title,
+                inverters=[OMA, BUERO4],
+                battery_backed=[BUERO4],
+                grid_meter=meter,
+                dc_batteries={BUERO4: sensors},
+            )
+        ],
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    text = json.dumps(diagnostics)
+
+    for secret in (meter, *sensors, "secretmac", title, "Secretname"):
+        assert secret not in text, secret
+    house = next(s for s in diagnostics["entry"]["subentries"] if s["type"] == "house")
+    assert house["title"] == "house-1"
+    assert house["data"]["grid_meter"] == "grid-meter"
+    assert list(house["data"]["dc_batteries"].values()) == [
+        ["dc-battery-sensor-1", "dc-battery-sensor-2"]
+    ]
+    assert diagnostics["houses"][0]["name"] == "house-1"

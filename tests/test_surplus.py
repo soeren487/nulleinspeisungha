@@ -1,4 +1,4 @@
-"""The quarter-hour helpers and the forecast surplus, calculated directly."""
+"""The forecast surplus, calculated directly."""
 
 from __future__ import annotations
 
@@ -6,11 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from custom_components.nulleinspeisung.sunrise_energy import (
-    forecast_surplus,
-    quarter_start,
-    slots,
-)
+from custom_components.nulleinspeisung.surplus import forecast_surplus
 
 DEADLINE = datetime(2026, 10, 5, 5, 0, tzinfo=UTC)
 SLOT = timedelta(minutes=15)
@@ -22,26 +18,6 @@ def series(start: datetime, hours: float, watts) -> dict[datetime, float]:
     return {
         start + i * SLOT: (watts(i) if callable(watts) else watts) for i in range(count)
     }
-
-
-# -- the quarter-hours -------------------------------------------------------
-
-
-def test_a_quarter_hour_starts_at_a_multiple_of_fifteen_minutes() -> None:
-    moment = datetime(2026, 10, 5, 5, 7, 31, tzinfo=UTC)
-    assert quarter_start(moment) == datetime(2026, 10, 5, 5, 0, tzinfo=UTC)
-    assert quarter_start(DEADLINE + SLOT) == DEADLINE + SLOT
-
-
-def test_the_slots_of_a_period_count_the_part_inside_it() -> None:
-    start = DEADLINE + timedelta(minutes=5)
-    end = DEADLINE + timedelta(minutes=35)
-    assert list(slots(start, end)) == [
-        (DEADLINE, pytest.approx(10 / 60)),
-        (DEADLINE + SLOT, pytest.approx(0.25)),
-        (DEADLINE + 2 * SLOT, pytest.approx(5 / 60)),
-    ]
-    assert list(slots(end, start)) == []
 
 
 # -- the surplus ------------------------------------------------------------------

@@ -29,6 +29,8 @@ from .battery_watch import ISSUE_MQTT_NEEDED, ISSUE_OTHER_PUBLISHER, sync_issue
 if TYPE_CHECKING:
     from .house import House
 
+from .listeners import Listeners
+
 _LOGGER = logging.getLogger(__name__)
 
 OWN_WINDOW = 10.0
@@ -88,23 +90,15 @@ class GridPublisher:
         self._mqtt_unsub: CALLBACK_TYPE | None = None
         self._subscribing = False
         self._quiet_unsub: CALLBACK_TYPE | None = None
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners = Listeners(_LOGGER)
 
     @callback
     def async_add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
         """Call ``listener`` when switching or publishing happened."""
-        self._listeners.append(listener)
-
-        @callback
-        def remove() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return remove
+        return self._listeners.add(listener)
 
     def _notify(self) -> None:
-        for listener in list(self._listeners):
-            listener()
+        self._listeners.notify()
 
     # -- life cycle --------------------------------------------------------
 

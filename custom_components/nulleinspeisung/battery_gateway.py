@@ -25,6 +25,8 @@ from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .listeners import Listeners
+
 _LOGGER = logging.getLogger(__name__)
 
 FRESH_SECONDS = 60.0
@@ -306,21 +308,14 @@ class BatteryGateway:
         self._last_message_at: float | None = None
         self._published: BatteryState | None = None
         self._unsubs: list[CALLBACK_TYPE] = []
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners = Listeners(_LOGGER)
 
     # -- observers ---------------------------------------------------------
 
     @callback
     def async_add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
         """Call ``listener`` when the state changes; returns the remover."""
-        self._listeners.append(listener)
-
-        @callback
-        def remove() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return remove
+        return self._listeners.add(listener)
 
     @property
     def state(self) -> BatteryState:
@@ -339,8 +334,7 @@ class BatteryGateway:
         if state == self._published:
             return
         self._published = state
-        for listener in list(self._listeners):
-            listener()
+        self._listeners.notify()
 
     # -- life cycle --------------------------------------------------------
 

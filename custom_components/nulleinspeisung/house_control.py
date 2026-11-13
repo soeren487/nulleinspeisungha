@@ -46,6 +46,7 @@ from .limit_model import (
     next_ceiling,
 )
 from .limit_split import LimitSplit, split_equally
+from .listeners import Listeners
 
 if TYPE_CHECKING:
     from .house import House
@@ -100,6 +101,13 @@ class _Controllable:
     data_age: float
     """Seconds old the reading is now, including time since the DTU refresh."""
     battery_backed: bool = False
+    reported_limit: float | None = None
+    """The Inverter Limit in percent its DTU reports."""
+
+
+RELEASE_TIMEOUT = 5.0
+"""Seconds the Inverters are given to take 100 % when the House unloads or Home
+Assistant stops; what takes longer is left."""
 
 
 class HouseControl:
@@ -166,29 +174,23 @@ class HouseControl:
         """The percent the controller and split asked, before any reserve cap."""
         self._ceilings: dict[str, float] = {}
         """The ceiling last applied to each Inverter by the response reserve."""
+        self._adopted = False
+        """Whether limits the Inverters had at the start were taken over."""
         self._started = False
         self._unsub_timer: CALLBACK_TYPE | None = None
         self._lock = asyncio.Lock()
-        self._listeners: list[Callable[[], None]] = []
+        self._listeners = Listeners(_LOGGER)
 
     # -- observers ---------------------------------------------------------
 
     @callback
     def async_add_listener(self, listener: Callable[[], None]) -> CALLBACK_TYPE:
         """Call ``listener`` when state or settings change; returns the remover."""
-        self._listeners.append(listener)
-
-        @callback
-        def remove() -> None:
-            if listener in self._listeners:
-                self._listeners.remove(listener)
-
-        return remove
+        return self._listeners.add(listener)
 
     @callback
     def _notify(self) -> None:
-        for listener in list(self._listeners):
-            listener()
+        self._listeners.notify()
 
     @property
     def curtailing(self) -> bool:
@@ -201,6 +203,11 @@ class HouseControl:
         return self.curtailment and any(
             percent < FULL_LIMIT for percent in self._wanted.values()
         )
+
+    @property
+    def limited_serials(self) -> frozenset[str]:
+        """The Inverters the House has limited below 100 %."""
+        return frozenset(s for s, p in self._sent.items() if p < FULL_LIMIT)
 
     # -- settings ----------------------------------------------------------
 
@@ -272,6 +279,26 @@ class HouseControl:
             self.requested_percent_battery_backed = None
             self._clear_failure()
         self._notify()
+
+    async def async_release_limits(self) -> None:
+        """Give the reachable assigned Inverters 100 % and forget what was sent.
+
+        For the House going away (disabled, Home Assistant stopping): best effort
+        within ``RELEASE_TIMEOUT`` seconds, nothing is raised, and nothing is sent
+        when the House has limited nothing.
+        """
+        if not self.limited_serials:
+            return
+        try:
+            async with asyncio.timeout(RELEASE_TIMEOUT):
+                async with self._lock:
+                    await self._async_release()
+        except TimeoutError:
+            _LOGGER.warning(
+                "Giving the Inverters 100 %% took longer than %s s", RELEASE_TIMEOUT
+            )
+        except Exception:
+            _LOGGER.warning("Could not give the Inverters 100 %%", exc_info=True)
 
     def _watch_meter(self) -> None:
         """Keep the Grid Meter's readings, starting with the one it shows now."""
@@ -412,6 +439,9 @@ class HouseControl:
         }:
             if serial not in controllable:
                 self._forget(serial)
+        if not self._adopted and group:
+            self._adopted = True
+            self._adopt(group)
         now = dt_util.utcnow().timestamp()
         battery = self._house.battery
         target, capped = import_target(
@@ -581,6 +611,27 @@ class HouseControl:
         )
         await self._async_resend(group)
 
+    def _adopt(self, group: list[_Controllable]) -> None:
+        """Take a limit below 100 % that a DTU reports at the start, and for which
+        the House has sent nothing, as the House's own: it was left by the House
+        before Home Assistant restarted, and the rules that raise it then apply.
+        Without this the House assumes 100 % and, with an AC Battery that covers
+        the load, never raises it."""
+        now = dt_util.utcnow().timestamp()
+        for inverter in group:
+            serial = inverter.serial
+            reported = inverter.reported_limit
+            if serial in self._sent or serial in self._pending or reported is None:
+                continue
+            percent = round(reported)
+            # The House never sends less than the Limit Floor: 0 % is what a DTU
+            # reports after it restarted, not a limit of ours.
+            if percent >= FULL_LIMIT or percent < math.ceil(self.limit_floor):
+                continue
+            self._sent[serial] = percent
+            self._wanted[serial] = percent
+            self._models[serial] = LimitState(percent, percent, now)
+
     async def _async_apply(
         self,
         members: list[_Controllable],
@@ -730,6 +781,7 @@ class HouseControl:
                             production=inverter.power,
                             data_age=inverter.data_age + since_refresh,
                             battery_backed=serial in self._house.config.battery_backed,
+                            reported_limit=inverter.limit,
                         )
                     )
                 break

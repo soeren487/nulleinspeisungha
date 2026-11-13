@@ -273,7 +273,8 @@ class UseForecastSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
 
 
 class TopUpSwitch(ChargingEntity, SwitchEntity, RestoreEntity):
-    """Whether Grid Charging charges to 95 % so that BatteryLife lowers its minimum."""
+    """Whether Grid Charging plans the BatteryLife Top-up: charging to the top-up level
+    so that BatteryLife lowers its minimum."""
 
     _attr_translation_key = "batterylife_top_up"
 

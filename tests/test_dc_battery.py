@@ -237,7 +237,10 @@ def test_a_deadline_inside_a_quarter_hour_counts_its_part() -> None:
     deadline = NOW + timedelta(minutes=20)
     result = dc_battery_support(NOW, deadline, {"A": flat()}, {"A": 10.0}, BERLIN)
     assert result.kwh == pytest.approx(0.3 * 20 / 60)
-    assert result.watts[NOW + SLOT] == pytest.approx(300.0)
+    # The planner applies the W to the whole quarter-hour: 5 of 15 minutes
+    # delivered 0.025 kWh, so the mean over all of it is a third of 300 W.
+    assert result.watts[NOW + SLOT] == pytest.approx(100.0)
+    assert result.watts[NOW + SLOT] * 0.25 / 1000 == pytest.approx(0.025)
 
 
 def test_the_support_of_several_inverters_is_summed() -> None:
