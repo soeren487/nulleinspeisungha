@@ -27,13 +27,11 @@ from .battery_gateway import minimum_floor
 from .charging_planner import (
     MAX_HORIZON,
     SLOT,
-    TOP_UP_LEVEL,
     BatteryModel,
     ChargingPlan,
     PlanReason,
     Quarter,
     TopUp,
-    discharge_block_active,
     plan_charging,
     slot_length,
 )
@@ -50,6 +48,8 @@ DEFAULT_FORECAST_SHARE = 70.0
 """Percent of the PV Forecast that is counted."""
 DEFAULT_SAFETY_BUFFER = 50.0
 """Percent of the Maximum Charge Power held back in the pessimistic run."""
+DEFAULT_TOP_UP_LEVEL = 100.0
+"""Percent the battery must reach on a day for BatteryLife to lower its minimum."""
 TOP_UP_MARGIN = 0.5
 """Percentage points the active minimum must lie above the configured one for
 BatteryLife to count as having raised it."""
@@ -122,6 +122,8 @@ class GridCharging:
         self.safety_buffer = DEFAULT_SAFETY_BUFFER
         self.top_up = True
         """Whether the BatteryLife Top-up may be planned."""
+        self.top_up_level = DEFAULT_TOP_UP_LEVEL
+        """Percent the BatteryLife Top-up charges to; reaching it counts for the day."""
         self.top_up_wanted = False
         """Whether the current plan was asked for a BatteryLife Top-up."""
         self.forecast_in_use = False
@@ -223,6 +225,11 @@ class GridCharging:
     def set_safety_buffer(self, percent: float) -> None:
         """Change the Safety Buffer in percent of the Maximum Charge Power."""
         self.safety_buffer = percent
+        self._settings_changed()
+
+    def set_top_up_level(self, percent: float) -> None:
+        """Change the level the BatteryLife Top-up charges to, in percent."""
+        self.top_up_level = percent
         self._settings_changed()
 
     def _settings_changed(self) -> None:
@@ -344,7 +351,7 @@ class GridCharging:
             self._top_up_end = None
             self._top_up_day = today
             self._reached_today = False
-        if level is None or self._reached_today or level < TOP_UP_LEVEL:
+        if level is None or self._reached_today or level < self.top_up_level:
             return False
         self._reached_today = True
         self._top_up_end = self._carried_end = None
@@ -370,7 +377,7 @@ class GridCharging:
             self._carried_end = None
             end = self._window_end(now)
         self._top_up_end = end
-        return TopUp(level=TOP_UP_LEVEL, end=end)
+        return TopUp(level=self.top_up_level, end=end)
 
     def _window_end(self, now: datetime) -> datetime:
         """The end of the top-up window that starts now: the end of the run of
@@ -631,14 +638,12 @@ class GridCharging:
         )
 
     def _block_wanted(self, now: datetime) -> bool:
-        """Whether a Discharge Block is wanted: the rule, and we own a fresh battery."""
+        """Whether a Discharge Block is wanted: the Charging Plan holds the battery
+        in the current quarter-hour, and we own a fresh battery. No plan, no block."""
         if not self._block_applies():
             return False
-        prices = self._house.prices
-        assert prices is not None
-        return discharge_block_active(
-            now, prices.prices, PRICE_LEVEL_OPTIONS[self.price_levels]
-        )
+        plan = self.plan
+        return plan is not None and plan.is_held(now)
 
     def _block_applies(self) -> bool:
         """Whether Grid Charging would apply a Discharge Block at all."""
@@ -654,6 +659,7 @@ class GridCharging:
             or not battery.fresh
             or battery.dynamic_ess_mode
             or prices is None
+            or not prices.prices
         )
 
     @property

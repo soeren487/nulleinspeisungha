@@ -427,6 +427,9 @@
       },
       "safety_buffer": {
         "name": "Sicherheitspuffer"
+      },
+      "top_up_level": {
+        "name": "Ziel der BatteryLife-Vollladung"
       }
     },
     "select": {

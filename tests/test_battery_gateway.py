@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.nulleinspeisung import battery_gateway
 from custom_components.nulleinspeisung.battery_gateway import (
+    ASSUMED_MINIMUM_SOC,
     BatteryGateway,
     BatteryState,
     GxConnectionError,
@@ -460,11 +461,14 @@ async def test_null_minimums_are_unknown(hass: HomeAssistant) -> None:
 
 
 def test_the_floor_prefers_the_active_minimum() -> None:
-    """Active first, then configured, then 0."""
+    """Active first, then configured, then the assumed minimum."""
     both = BatteryState(active_minimum_soc=75.0, configured_minimum_soc=20.0)
     assert minimum_floor(both) == (75.0, "active")
     assert minimum_floor(BatteryState(configured_minimum_soc=20.0)) == (
         20.0,
         "configured",
     )
-    assert minimum_floor(BatteryState()) == (0.0, None)
+    # No minimum reported yet: not 0 %, which would count the battery as
+    # usable down to empty, and no source.
+    assert minimum_floor(BatteryState()) == (ASSUMED_MINIMUM_SOC, None)
+    assert ASSUMED_MINIMUM_SOC > 0

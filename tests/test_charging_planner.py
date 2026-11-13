@@ -22,11 +22,9 @@ from custom_components.nulleinspeisung.charging_planner import (
     PlanReason,
     Quarter,
     TopUp,
-    discharge_block_active,
     plan_charging,
     slot_length,
 )
-from custom_components.nulleinspeisung.price_source import PriceLevel
 
 T0 = datetime(2026, 10, 24, 0, 0, tzinfo=UTC)
 QUARTER = timedelta(minutes=15)
@@ -661,6 +659,233 @@ def test_without_discharge_blocks_a_qualifying_quarter_hour_drains_the_battery()
     assert drained.shortfall == pytest.approx(1.0 - (3.0 - 2.0 / E) * E)
 
 
+# -- the Discharge Block is decided by the plan (ticket 37) ----------------------
+
+
+def held_at(plan: ChargingPlan) -> list[str]:
+    return [h.strftime("%H:%M") for h in plan.held]
+
+
+def hours(first: str, last: str) -> list[str]:
+    """The quarter-hours from ``first`` up to, not including, ``last``."""
+    moment, out = at(first), []
+    while moment < at(last):
+        out.append(moment.strftime("%H:%M"))
+        moment += QUARTER
+    return out
+
+
+def cheap_night_dear_evening(**kw):
+    """A cheap night (0.05, 300 W), a day the PV carries, a dear evening (0.256,
+    500 W) that needs 2.0 kWh, which take 2.0 / e from the battery."""
+    return day(
+        ("00:00", "07:00", 0.05, True, 300.0),
+        ("07:00", "17:00", 0.20, False, 300.0, 300.0),
+        ("17:00", "21:00", 0.256, False, 500.0),
+        ("21:00", "24:00", 0.05, True, 300.0),
+        *kw.get("more", ()),
+    )
+
+
+def test_a_long_cheap_period_without_a_dearer_quarter_holds_nothing() -> None:
+    """2026-11-12/13: 39 hours of cheap quarters at one price, the battery at 95 %.
+    The Price Level said cheap all the time and the battery never discharged."""
+    quarters = [Quarter(T0 + i * QUARTER, 0.243, True, 300.0) for i in range(156)]
+    plan = plan_charging(T0, quarters, battery(charge_level=95.0))
+
+    assert plan.held == ()
+    assert not plan.is_held(T0)
+    assert not plan.is_held(T0 + 20 * QUARTER)
+    assert plan.slots == ()
+    assert plan.reason is PlanReason.NO_SHORTFALL
+
+
+def test_a_dearer_quarter_the_battery_carries_by_itself_holds_nothing() -> None:
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=95.0)
+    )
+
+    assert plan.held == ()
+    assert plan.shortfall == 0.0
+    assert plan.slots == ()
+
+
+def test_before_a_dear_evening_the_latest_cheap_quarters_are_held_as_needed() -> None:
+    """30 % = 3 kWh; the evening needs 2.0 / e = 2.264 kWh of it, so 0.736 kWh may
+    go to the night's load (0.075 / e = 0.0849 kWh a quarter): eight quarters.
+    The rest of the night, the latest quarters, are held."""
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=30.0)
+    )
+
+    assert held_at(plan) == hours("02:00", "07:00")
+    assert plan.shortfall == 0.0
+    assert plan.reference_price is None
+    assert plan.slots == ()
+    assert plan.reason is PlanReason.NO_SHORTFALL
+    assert plan.is_held(at("02:00"))
+    assert plan.is_held(at("06:59"))
+    assert not plan.is_held(at("01:59"))
+    assert not plan.is_held(at("07:00"))
+    # The evening quarter-hours are not qualifying; the late cheap ones come after.
+    assert not plan.is_held(at("21:00"))
+
+
+def test_holding_comes_before_buying() -> None:
+    """10 % = 1 kWh cannot carry the evening even if held all night; the rest is
+    bought, and it is only what the held energy leaves."""
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=10.0)
+    )
+
+    missing = 2.0 - 1.0 * E
+    assert plan.shortfall == pytest.approx(missing)
+    assert plan.energy_to_buy == pytest.approx(missing / 0.78)
+    assert plan.uncovered == pytest.approx(0.0, abs=1e-6)
+    # All of the night is held (the bought quarters, at the latest, implicitly).
+    assert held_at(plan) == hours("00:00", "07:00")
+
+
+def test_a_shortfall_at_a_lower_price_is_no_reason_to_hold() -> None:
+    quarters = day(
+        ("00:00", "06:00", 0.10, True, 300.0),
+        ("06:00", "07:00", 0.04, False, 500.0),
+    )
+    plan = plan_charging(at("00:00"), quarters, battery(charge_level=20.0))
+
+    assert plan.shortfall > 0.0
+    assert plan.held == ()
+
+
+def test_a_cheaper_quarter_is_held_for_a_dearer_one_only() -> None:
+    """Of two qualifying periods only the cheaper one lies below the shortfall."""
+    quarters = day(
+        ("00:00", "03:00", 0.30, True, 600.0),  # as dear as the shortfall
+        ("03:00", "06:00", 0.05, True, 600.0),
+        ("06:00", "08:00", 0.30, False, 1000.0),
+    )
+    plan = plan_charging(at("00:00"), quarters, battery(charge_level=50.0))
+
+    assert plan.shortfall == pytest.approx(0.0)
+    assert not any(at("00:00") <= h < at("03:00") for h in plan.held)
+    assert plan.held
+    assert all(at("03:00") <= h < at("06:00") for h in plan.held)
+
+
+def test_without_discharge_blocks_nothing_is_held() -> None:
+    plan = plan_charging(
+        at("00:00"),
+        cheap_night_dear_evening(),
+        battery(charge_level=30.0, discharge_blocks=False),
+    )
+
+    assert plan.held == ()
+    assert plan.shortfall > 0.0
+
+
+def test_the_quarters_the_plan_charges_in_are_held() -> None:
+    plan = plan_charging(
+        at("00:00"), cheap_night_dear_evening(), battery(charge_level=10.0)
+    )
+
+    assert plan.slots
+    for slot in plan.slots:
+        assert plan.is_held(slot.start)
+
+
+def test_held_quarters_keep_the_pv_surplus_charging_the_battery() -> None:
+    """A held quarter-hour with a PV surplus charges the battery: the content at
+    the evening is the same as if the surplus had been added there."""
+    quarters = day(
+        ("00:00", "06:00", 0.05, True, 300.0),
+        ("06:00", "08:00", 0.05, True, 300.0, 1300.0),  # 1 kW surplus
+        ("08:00", "10:00", 0.30, False, 1000.0),
+    )
+    plan = plan_charging(at("00:00"), quarters, battery(charge_level=10.0))
+
+    # 1 kWh, the PV surplus of two hours stores 2 * e, the two dear hours need 2.
+    assert plan.shortfall == pytest.approx(0.0)
+    assert plan.held
+
+
+def test_a_top_up_holds_the_battery_from_its_first_quarter_to_the_level() -> None:
+    """The load drains the battery in the qualifying quarters; the cheapest ones
+    are not next to each other. From the first planned quarter-hour to the one
+    that reaches 95 % the battery is held so that it does not give back what was
+    bought; before and after it is not."""
+    quarters = day(
+        ("10:00", "13:00", 0.30, False, 0.0),
+        ("13:00", "14:00", 0.30, True, 600.0),
+        ("14:00", "14:30", 0.05, True, 600.0),
+        ("14:30", "15:30", 0.20, True, 600.0),
+        ("15:30", "16:00", 0.05, True, 600.0),
+        ("16:00", "17:00", 0.30, True, 600.0),
+        ("17:00", "24:00", 0.30, False, 0.0),
+    )
+    plan = top_up_plan(quarters)
+
+    assert starts(plan) == ["14:00", "14:15", "15:15", "15:30", "15:45"]
+    assert held_at(plan) == hours("14:00", "16:00")
+    assert not plan.is_held(at("13:59"))
+    assert not plan.is_held(at("16:00"))
+    # The 0.1 kWh above the floor went to the load before the first quarter
+    # (13:00 is not held); from there on nothing is given back: 2.0 kWh stored.
+    assert plan.top_up_kwh == pytest.approx(2.0 / E)
+
+
+def test_a_top_up_that_is_not_wanted_holds_nothing() -> None:
+    plan = top_up_plan(
+        day(("10:00", "24:00", 0.10, True, 600.0)), top_up=None, charge_level=95.0
+    )
+
+    assert plan.held == ()
+
+
+def test_a_top_up_limits_its_hold_to_its_window() -> None:
+    """Qualifying quarters after the end of the window are not held for it."""
+    quarters = day(
+        ("10:00", "23:00", 0.30, False, 0.0),
+        ("23:00", "24:00", 0.05, True, 600.0),
+        ("24:00", "26:00", 0.30, True, 600.0),
+    )
+    plan = top_up_plan(quarters)
+
+    assert plan.slots
+    assert all(h < at("24:00") for h in plan.held)
+
+
+def test_the_buffer_holds_in_its_own_runs_and_the_plan_stays_consistent() -> None:
+    """With the Safety Buffer the pessimistic runs hold the same way: the plan of
+    the cheap night before a dear evening is unchanged by a buffer that needs
+    nothing."""
+    quarters = cheap_night_dear_evening()
+    without = plan_charging(at("00:00"), quarters, battery(charge_level=30.0))
+    with_buffer = plan_charging(
+        at("00:00"), quarters, battery(charge_level=30.0), buffer=0.5
+    )
+
+    assert with_buffer.held == without.held
+    assert with_buffer.slots == without.slots
+    assert with_buffer.buffer_kwh == 0.0
+
+
+def test_a_planning_run_over_48_hours_with_many_shortfalls_is_quick() -> None:
+    quarters = [
+        Quarter(
+            T0 + i * QUARTER,
+            0.05 if (i // 16) % 2 == 0 else 0.30,
+            (i // 16) % 2 == 0,
+            400.0,
+        )
+        for i in range(192)
+    ]
+    started = time.monotonic()
+    plan = plan_charging(T0, quarters, battery(charge_level=60.0), buffer=0.5)
+
+    assert time.monotonic() - started < 5.0
+    assert plan.uncovered <= plan.shortfall + 1e-9
+
+
 def test_a_planned_quarter_hour_leaves_the_battery_content_unchanged_by_the_load() -> (
     None
 ):
@@ -741,67 +966,6 @@ def test_nothing_is_due_without_slots() -> None:
     assert not plan_charging(T0, [], battery()).is_due(T0)
 
 
-# -- the Discharge Block rule ----------------------------------------------
-
-QUALIFYING_SETS = {
-    "very_cheap": {PriceLevel.VERY_CHEAP},
-    "cheap_and_below": {PriceLevel.VERY_CHEAP, PriceLevel.CHEAP},
-    "normal_and_below": {PriceLevel.VERY_CHEAP, PriceLevel.CHEAP, PriceLevel.NORMAL},
-}
-ALL_LEVELS = (
-    PriceLevel.VERY_CHEAP,
-    PriceLevel.CHEAP,
-    PriceLevel.NORMAL,
-    PriceLevel.EXPENSIVE,
-    PriceLevel.VERY_EXPENSIVE,
-)
-
-
-@pytest.mark.parametrize("option", list(QUALIFYING_SETS))
-@pytest.mark.parametrize("level", ALL_LEVELS)
-def test_a_block_is_active_exactly_when_the_level_qualifies(
-    option: str, level: PriceLevel
-) -> None:
-    qualifying = QUALIFYING_SETS[option]
-    points = prices(NIGHT, [(0.3, level), (0.3, PriceLevel.VERY_EXPENSIVE)])
-    now = NIGHT + timedelta(minutes=5)
-    assert discharge_block_active(now, points, qualifying) is (level in qualifying)
-
-
-def test_a_block_needs_a_price_for_the_instant() -> None:
-    qualifying = QUALIFYING_SETS["cheap_and_below"]
-    assert not discharge_block_active(NIGHT, [], qualifying)
-    points = night([0.1, 0.1], level=PriceLevel.CHEAP)
-    assert not discharge_block_active(NIGHT - timedelta(seconds=1), points, qualifying)
-    assert not discharge_block_active(NIGHT + 2 * QUARTER, points, qualifying)
-
-
-def test_a_block_follows_the_slot_boundaries_exactly() -> None:
-    qualifying = QUALIFYING_SETS["cheap_and_below"]
-    points = prices(
-        NIGHT,
-        [
-            (0.4, PriceLevel.NORMAL),
-            (0.1, PriceLevel.CHEAP),
-            (0.4, PriceLevel.NORMAL),
-        ],
-    )
-    second = NIGHT + QUARTER
-    third = NIGHT + 2 * QUARTER
-    assert not discharge_block_active(second - timedelta(seconds=1), points, qualifying)
-    assert discharge_block_active(second, points, qualifying)
-    assert discharge_block_active(third - timedelta(seconds=1), points, qualifying)
-    assert not discharge_block_active(third, points, qualifying)
-
-
-def test_a_block_does_not_depend_on_the_price_or_the_order() -> None:
-    """Only the level of the point valid at the instant counts."""
-    qualifying = QUALIFYING_SETS["very_cheap"]
-    points = prices(NIGHT, [(0.9, PriceLevel.VERY_CHEAP), (0.01, PriceLevel.EXPENSIVE)])
-    assert discharge_block_active(NIGHT, list(reversed(points)), qualifying)
-    assert not discharge_block_active(NIGHT + QUARTER, points, qualifying)
-
-
 # -- the BatteryLife Top-up --------------------------------------------------
 
 TOP_UP = TopUp(level=95.0, end=at("24:00"))
@@ -842,6 +1006,26 @@ def test_the_top_up_buys_in_the_cheapest_quarters_before_midnight_up_to_95() -> 
     assert all(s.price == 0.10 for s in plan.slots)
     assert plan.shortfall == 0.0
     assert plan.uncovered == 0.0
+
+
+def test_the_top_up_charges_up_to_the_level_it_is_asked_for() -> None:
+    """Above the floor of 75 % the battery holds 2.5 kWh; 76 % are 0.1 kWh of it."""
+    full = top_up_plan(top_up_day(), top_up=TopUp(level=100.0, end=at("24:00")))
+    ninety = top_up_plan(top_up_day(), top_up=TopUp(level=90.0, end=at("24:00")))
+
+    assert full.top_up_kwh == pytest.approx(2.4 / E)
+    assert ninety.top_up_kwh == pytest.approx(1.4 / E)
+    assert sum(s.stored_kwh for s in full.slots) == pytest.approx(2.4)
+
+
+def test_a_charge_target_below_the_level_rules_the_top_up_out() -> None:
+    plan = top_up_plan(
+        top_up_day(),
+        top_up=TopUp(level=100.0, end=at("24:00")),
+        charge_target=99.0,
+    )
+
+    assert plan.slots == ()
 
 
 def test_quarters_after_the_end_of_the_window_are_not_used_for_the_top_up() -> None:
@@ -1189,12 +1373,14 @@ def night_plan(
 ) -> ChargingPlan:
     """The top-up of the evening of 2026-11-10 with the buffer at 50 %: the
     quarter-hours up to ``qualifying_until`` qualify (0.10), the ones to 02:00 do
-    not (0.30), 300 W of load; the window ends at ``window_end``."""
+    not (0.30), no load (what the battery holds then does not move; a load that
+    drains it before the charging starts is tested with the holding); the window
+    ends at ``window_end``."""
     quarters = []
     moment = now - timedelta(minutes=now.minute % 15)
     while moment < at("26:00"):
         qualifies = moment < at(qualifying_until)
-        quarters.append(Quarter(moment, 0.10 if qualifies else 0.30, qualifies, 300.0))
+        quarters.append(Quarter(moment, 0.10 if qualifies else 0.30, qualifies, 0.0))
         moment += QUARTER
     return plan_charging(
         now,

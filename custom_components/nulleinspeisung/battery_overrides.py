@@ -8,6 +8,7 @@ itself is released when it loses the battery.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -15,6 +16,8 @@ from typing import TYPE_CHECKING
 from homeassistant.core import CALLBACK_TYPE
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
+
+_LOGGER = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from .house import House
@@ -77,6 +80,24 @@ class OverrideControl:
         for unsub in self._unsubs:
             unsub()
         self._unsubs = []
+
+    def release_ours(self) -> None:
+        """Release the overrides the integration set, at once and best effort.
+
+        For Home Assistant stopping: nothing is awaited and nothing is raised.
+        """
+        gateway = self._house.gateway
+        paths, self._ours = self._ours, set()
+        if gateway is None:
+            return
+        for path in paths:
+            release = (
+                RELEASE_SETPOINT if path == SETPOINT_PATH else RELEASE_MAX_DISCHARGE
+            )
+            try:
+                gateway.async_write(path, release)
+            except Exception:
+                _LOGGER.debug("Could not release %s on stop", path, exc_info=True)
 
     async def _tick(self, _now: object) -> None:
         self.evaluate()

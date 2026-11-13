@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** needs-info
+**Status:** wontfix
 
 - [ ] Each Inverter device has a limit slew rate setting that survives restarts
 - [ ] Its default comes from the firmware build date: slow for builds before 2021, fast otherwise, and slow while the date is unknown
@@ -17,3 +17,5 @@
 ## Comments
 
 2026-10-05: On hold. The owner is trying to update the firmware of the slow Inverters. If they then follow limits within seconds like the others, a per-Inverter rate is not needed and the House-wide setting can simply be set fast. Decide after the Inverters are re-measured.
+
+2026-11-13: Closed by the owner; a per-Inverter rate is not needed.

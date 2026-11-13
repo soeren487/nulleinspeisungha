@@ -88,6 +88,7 @@ async def _setup(
     switches: dict[str, str | None] | None = None,
     prices: dict[str, tuple[float, str]] | None = None,
     load_history: list[tuple[datetime, float]] | None = None,
+    no_minimum: bool = False,
 ):
     """Set up at 22:00 with ``days`` of production history and a fallback load.
 
@@ -102,7 +103,11 @@ async def _setup(
     if load_history is not None:
         seed_load_history(hass_storage, "house-home", load_history)
     gx = SimGx()
-    gx.no_minimum()  # these tests count the whole content, as a GX without one
+    if no_minimum:
+        gx.no_minimum()
+    else:
+        # most tests count the whole content: a GX that reports a minimum of 0 %
+        gx.topics[ACTIVE_MINIMUM] = '{"value":0.0}'
     gx.charge(level=level, power=0.0)
     hass.states.async_set(METER, "100", {"unit_of_measurement": "W"})
     entry = await setup_entry(
@@ -223,10 +228,11 @@ async def test_the_sensors_show_the_values_of_the_calculation(
     assert surplus is not None
     assert surplus > 0.5
     assert _kwh(hass, "forecast_surplus") == pytest.approx(surplus, abs=1e-3)
-    # 22:00 to sunrise (07:15): 37 quarter-hours, 5 of them Discharge Blocks, and
-    # no PV yet; the planned charging is stored before sunrise.
+    # 22:00 to sunrise (07:15): 37 quarter-hours and no PV yet. Nothing dearer
+    # needs the energy of the 5 cheap ones, so the battery carries them too; the
+    # planned charging is stored before sunrise.
     assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        2.0 - 32 * 0.025 / ROOT + _kwh(hass, "energy_to_buy") * ROOT, abs=1e-3
+        2.0 - 37 * 0.025 / ROOT + _kwh(hass, "energy_to_buy") * ROOT, abs=1e-3
     )
 
 
@@ -431,11 +437,12 @@ async def test_a_load_known_only_for_part_of_the_horizon_shortens_the_plan(
     house.grid_charging._replan()
     await hass.async_block_till_done()
     assert _value(hass, "sensor", "forecast_surplus") == "unknown"
-    # 22:00 to 03:00: 20 quarter-hours, the two at 02:00 and 02:15 are blocks
+    # 22:00 to 03:00: 20 quarter-hours; no dearer quarter needs the energy of the
+    # two cheap ones at 02:00 and 02:15, so the battery carries them as well
     assert _kwh(hass, "expensive_shortfall") == 0.0
     assert _value(hass, "sensor", "grid_charging_state") == "no_shortfall"
     assert _kwh(hass, "battery_at_sunrise") == pytest.approx(
-        2.0 - 18 * 0.025 / ROOT, abs=1e-3
+        2.0 - 20 * 0.025 / ROOT, abs=1e-3
     )
 
 
@@ -630,6 +637,7 @@ async def _minimum_house(
         daily_kwh=7.2,
         level=76.0,
         prices=AFTER_SUNRISE_PRICES,
+        no_minimum=True,
     )
     return gx
 
@@ -692,7 +700,9 @@ async def test_the_configured_minimum_is_used_when_no_active_one_is_known(
     gx.set(CONFIGURED_MINIMUM, None)
     await hass.async_block_till_done()
     without_floor = _kwh(hass, "battery_at_sunrise")
-    assert _state(hass, "sensor", "ac_battery_minimum_charge_level").state == "0.0"
+    # nothing reported: the sensor is unknown, the plan counts a floor above 0 %
+    state = _state(hass, "sensor", "ac_battery_minimum_charge_level").state
+    assert state == "unavailable"
     # 20 % of 10 kWh is 2 kWh less usable
     assert with_configured < without_floor
     assert shortfall_with_configured > _kwh(hass, "expensive_shortfall")

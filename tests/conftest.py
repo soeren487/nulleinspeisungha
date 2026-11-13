@@ -152,6 +152,8 @@ class SimDtu:
     down: bool = False
     reboot_fails: bool = False
     limit_fails: bool = False
+    limit_http_status: int = 200
+    """The HTTP status a limit command is answered with; 502 refuses it."""
     """Limit commands are answered with a warning and not applied."""
     reflect_limits: bool = True
     """An accepted limit shows up in the limit the DTU reports afterwards."""
@@ -333,6 +335,10 @@ class DtuNetwork:
         self, dtu: SimDtu, method: str, url: Any, data: Any
     ) -> AiohttpClientMockResponse:
         """Answer a limit command; apply it unless the DTU is set to fail."""
+        if dtu.limit_http_status != 200:
+            return AiohttpClientMockResponse(
+                method, url, status=dtu.limit_http_status, text="Bad Gateway"
+            )
         if dtu.limit_fails:
             return AiohttpClientMockResponse(
                 method, url, json={"type": "warning", "message": "No values found!"}

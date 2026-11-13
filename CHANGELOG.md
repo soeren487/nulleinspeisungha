@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Discharge Block now follows the Charging Plan instead of the Price Level.** Tibber's Price Level compares with the days before, not with an absolute price: from 2026-11-11 21:30 it was "cheap" or "very cheap" for more than 39 hours, and the battery stood at 95 to 98 % all that time while the House bought about 30 kWh from the grid. The battery is now held in a cheap quarter-hour only when its energy is needed later at a higher price and would be missing there; the latest cheap quarter-hours are held first, only as far as needed, and what the plan buys is kept until the dearer quarter-hour. In a long cheap period with nothing dearer waiting, the battery discharges as usual.
+- **The BatteryLife top-up now charges to 100 % by default** (was 95 %); the owner's BatteryLife lowered its minimum more reliably that way. The battery is held from the first top-up quarter-hour until the level is reached, so it does not discharge what was just bought.
+
+### Added
+
+- A number "BatteryLife top-up level" ("Ziel der BatteryLife-Vollladung", 90 to 100 %, default 100 %) on the Grid charging device. The top-up counts as reached for the day when the charge level reaches it.
+
+### Fixed
+
+- When Home Assistant stops, the setpoint and discharge overrides that the integration set are released on the GX.
+- The AC battery's minimum charge level no longer shows 0 % for a moment after a start: it is unknown until the GX reports it, and the plan counts from 10 % meanwhile.
+- Devices below the House or the DTU are linked the way Home Assistant now asks for, so the deprecation warning about `via_device` is gone.
+- A DTU request that times out now says "timed out after 10 s" instead of an empty message.
+
+### Good to know
+
+- A battery reports 100 % only at the end of absorption, so charging near the end is slow. The top-up stays wanted until the level is really reported; the Charge Target still caps it. Set the level to 95 % for the previous behaviour.
+- The top-up to 100 % buys about a quarter more energy than the one to 95 %.
+- "Discharge block active" will be on much less often than before.
+
 ## 0.11.0
 
 ### Changed

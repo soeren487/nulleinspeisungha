@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .battery_gateway import BatteryGateway
@@ -131,6 +131,16 @@ async def async_setup_entry(
         if house.grid_publisher is not None:
             entry.async_on_unload(house.grid_publisher.stop)
             house.grid_publisher.start()
+
+    @callback
+    def release_on_stop(_event: Event) -> None:
+        # Before the MQTT connections close, give the GX its overrides back.
+        for house in houses.values():
+            house.override_control.release_ours()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, release_on_stop)
+    )
     return True
 
 

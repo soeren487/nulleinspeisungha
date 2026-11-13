@@ -1257,6 +1257,7 @@ async def test_the_charging_device_sits_below_the_house(
             "forecast_in_use",
             "safety_buffer",
             "safety_buffer_active",
+            "top_up_level",
         )
     }
     assert {e.entity_id for e in entities} == {
@@ -1284,6 +1285,7 @@ async def test_the_charging_device_sits_below_the_house(
         "binary_sensor.home_forecast_in_use",
         "number.home_safety_buffer",
         "binary_sensor.home_safety_buffer_active",
+        "number.home_top_up_level",
     }
 
 

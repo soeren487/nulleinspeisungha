@@ -30,6 +30,7 @@ from .grid_charging import (
     DEFAULT_CHARGE_TARGET,
     DEFAULT_FORECAST_SHARE,
     DEFAULT_SAFETY_BUFFER,
+    DEFAULT_TOP_UP_LEVEL,
 )
 from .house import House
 from .house_control import (
@@ -232,6 +233,19 @@ CHARGING_DESCRIPTIONS: tuple[HouseNumberDescription, ...] = (
         default=DEFAULT_SAFETY_BUFFER,
         getter=lambda charging: charging.safety_buffer,
         setter=lambda charging, value: charging.set_safety_buffer(value),
+    ),
+    HouseNumberDescription(
+        key="top_up_level",
+        translation_key="top_up_level",
+        native_unit_of_measurement=PERCENTAGE,
+        native_min_value=90,
+        native_max_value=100,
+        native_step=1,
+        mode=NumberMode.BOX,
+        entity_category=EntityCategory.CONFIG,
+        default=DEFAULT_TOP_UP_LEVEL,
+        getter=lambda charging: charging.top_up_level,
+        setter=lambda charging, value: charging.set_top_up_level(value),
     ),
 )
 

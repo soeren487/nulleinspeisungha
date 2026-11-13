@@ -99,7 +99,7 @@ The price the energy bought by Grid Charging is expected to replace: the mean pr
 _Avoid_: Comparison price, later price
 
 **BatteryLife Top-up**:
-Grid Charging up to 95 % once a day in qualifying quarter-hours, so that the AC Battery's Victron lowers the minimum charge level its BatteryLife has raised.
+Grid Charging up to a set level (default 100 %) once a day in qualifying quarter-hours, so that the AC Battery's Victron lowers the minimum charge level its BatteryLife has raised.
 _Avoid_: Full charge, equalisation, maintenance charge
 
 **Safety Buffer**:
@@ -107,7 +107,7 @@ The share of the Maximum Charge Power that Grid Charging keeps in reserve when i
 _Avoid_: Margin, reserve, headroom
 
 **Discharge Block**:
-A period during which an AC Battery must not discharge, because the Price Level is low and the stored energy is worth more later.
+A quarter-hour in which an AC Battery must not discharge, because the Charging Plan finds its stored energy is needed later at a higher price and would be missing there. A low Price Level alone is no reason.
 _Avoid_: Hold, discharge lock
 
 **DC Battery Support**:
