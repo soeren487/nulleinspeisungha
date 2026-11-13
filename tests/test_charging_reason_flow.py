@@ -219,3 +219,42 @@ async def test_the_plan_attributes_stay_out_of_the_recorder(
     from custom_components.nulleinspeisung.sensor import NextChargingStartSensor
 
     assert {"slots", "plan", "held"} <= NextChargingStartSensor._unrecorded_attributes
+
+
+async def test_the_sentences_and_moments_of_the_reason_stay_out_of_the_recorder(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    from custom_components.nulleinspeisung.sensor import ChargingReasonSensor
+
+    unrecorded = ChargingReasonSensor._unrecorded_attributes
+    assert {"text", "text_de", "next_start", "shortfall_at", "held_until"} <= unrecorded
+    assert not {"power_w", "shortfall_kwh", "shortfall_price"} & unrecorded
+
+
+async def test_the_reason_is_worked_out_once_per_update(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    entry, gx = await _start(hass, dtu_network, tibber, freezer, _gx(), switches=ON)
+    charging = next(iter(entry.runtime_data.houses.values())).grid_charging
+    original = charging.reason
+    calls = []
+
+    def counting():
+        calls.append(1)
+        return original()
+
+    charging.reason = counting
+    gx.charge(level=70.0)
+    await hass.async_block_till_done()
+
+    # One notification of Grid Charging works the reason out once for the state
+    # and its attributes (it was twice).
+    assert len(calls) == 1

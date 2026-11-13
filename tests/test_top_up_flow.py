@@ -209,6 +209,66 @@ async def test_after_the_battery_reached_the_level_today_no_top_up_until_tomorro
     assert all("2026-10-25T12:00" <= slot < "2026-10-25T14:00" for slot in slots)
 
 
+async def test_the_day_the_top_up_was_reached_survives_a_reload(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+) -> None:
+    """Any change of the configuration reloads the entry: a second top-up the
+    same day would buy energy for a level the battery has just been at."""
+    entry, gx = await _start(
+        hass, dtu_network, tibber, freezer, _gx(), days=_two_days, switches=ON
+    )
+    await _settle(hass, freezer, gx, to="2026-10-24T14:00")
+    gx.charge(level=100.0)
+    await hass.async_block_till_done()
+    assert _energy(hass) == 0.0
+    gx.charge(level=80.0)
+    await _settle(hass, freezer, gx, seconds=1)
+    assert _energy(hass) == 0.0
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    await _settle(hass, freezer, gx, seconds=1)
+
+    assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is False
+    assert _energy(hass) == 0.0
+
+    # The next local day it is wanted again.
+    await _settle(hass, freezer, gx, to="2026-10-25T10:00")
+    gx.charge(level=76.0)
+    await hass.async_block_till_done()
+    assert _state(hass, "sensor", "top_up_energy").attributes["wanted"] is True
+    assert _energy(hass) == pytest.approx(TOP_UP_GRID)
+
+
+async def test_the_carried_window_survives_a_reload(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    tibber: SimTibber,
+    mqtt_mock: MagicMock,
+    freezer,
+    hass_storage: dict,
+) -> None:
+    """The window of a top-up asked for before midnight is stored with the day."""
+    entry, _gx_sim = await _start(
+        hass, dtu_network, tibber, freezer, _gx(), days=_two_days, switches=ON
+    )
+    await hass.async_block_till_done()
+    stored = hass_storage["nulleinspeisung.top_up_house-home"]["data"]
+    assert stored["day"] == "2026-10-24"
+    assert stored["reached"] is False
+    assert stored["top_up_end"] is not None
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    house = next(iter(entry.runtime_data.houses.values()))
+    assert house.grid_charging._top_up_end is not None
+    assert house.grid_charging._top_up_end.isoformat() == stored["top_up_end"]
+
+
 # -- the Safety Buffer -------------------------------------------------------
 
 

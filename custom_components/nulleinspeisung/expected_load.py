@@ -28,14 +28,13 @@ from .expected_load_model import (
     fallback_watts,
     learn,
 )
-from .forecast import slot_start
 from .quarter_recorder import SINGLE, QuarterRecorder
+from .quarters import SLOT, quarter_start
 
 if TYPE_CHECKING:
     from .house import House
 
 SAMPLE_EVERY = timedelta(seconds=30)
-SLOT = timedelta(minutes=15)
 KEEP_HISTORY = timedelta(days=35)
 DEFAULT_FALLBACK_KWH = 10.0
 """Daily consumption in kWh assumed until a week of history exists."""
@@ -98,7 +97,7 @@ class ExpectedLoad:
 
     def upcoming(self) -> tuple[tuple[datetime, float], ...]:
         """(start, W) of the quarter-hours from the current one over 48 hours."""
-        first = slot_start(dt_util.utcnow())
+        first = quarter_start(dt_util.utcnow())
         return tuple(
             (start, self._profile.watts_at(start))
             for start in (first + i * SLOT for i in range(HORIZON_SLOTS))

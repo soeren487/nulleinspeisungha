@@ -23,13 +23,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from itertools import pairwise
 from typing import Any, Protocol
 
-DEFAULT_SLOT = timedelta(minutes=15)
-"""Length of a price slot when the data cannot tell (fewer than two points)."""
-SLOT = timedelta(minutes=15)
-"""Length of one planned quarter-hour."""
+from .quarters import SLOT
+
 SLOT_HOURS = 0.25
 MAX_HORIZON = timedelta(hours=48)
 """How far ahead the planner looks at most."""
@@ -38,6 +35,8 @@ _PROGRESS = 1e-6
 """kWh a step must remove from the shortfalls to count as progress."""
 _FIT = 1e-9
 """kWh of rounding allowed when a content is compared with the Charge Target."""
+_STEPS = 12
+"""Steps of ``_feasible`` before it falls back to bisection."""
 _MIN_EFFICIENCY = 0.01
 """A Battery Efficiency below this is taken as this (no division by zero)."""
 MIN_BUFFER_POWER = 500.0
@@ -46,7 +45,7 @@ charges at."""
 
 
 class PriceSlot(Protocol):
-    """What ``slot_length`` needs to know of one price slot."""
+    """What the planner needs to know of one price slot."""
 
     @property
     def start(self) -> datetime:
@@ -201,16 +200,6 @@ def _utc(moment: datetime) -> datetime:
     return moment.astimezone(UTC)
 
 
-def slot_length(prices: Sequence[PriceSlot]) -> timedelta:
-    """The smallest positive step between two starts, else a quarter-hour."""
-    steps = [
-        step
-        for a, b in pairwise(sorted(prices, key=lambda p: _utc(p.start)))
-        if (step := _utc(b.start) - _utc(a.start)) > timedelta(0)
-    ]
-    return min(steps) if steps else DEFAULT_SLOT
-
-
 @dataclass(frozen=True, slots=True)
 class _Run:
     """The battery followed through all quarters with some charging planned."""
@@ -263,6 +252,14 @@ class _Model:
             max(b.capacity_kwh * (b.charge_level - floor) / 100.0, 0.0), self.full
         )
         """Content now; nothing below the floor counts."""
+        self._net = [
+            (q.load_w - q.pv_w - q.support_w) * hours / 1000.0
+            for q, hours in zip(quarters, self.hours, strict=True)
+        ]
+        """kWh the battery would have to deliver per quarter (negative: surplus)."""
+        self._qualifies = [q.qualifies for q in quarters]
+        self._last: tuple[list[float], list[bool], _Run] | None = None
+        """The inputs and the outcome of the last simulation."""
         self.held = [False] * len(quarters)
         """The qualifying quarters in which the battery is held (decided so far)."""
         self.top: tuple[float, int] | None = None
@@ -314,32 +311,76 @@ class _Model:
             self.top = None
 
     def _simulate(self, planned: Sequence[float], held: Sequence[bool]) -> _Run:
-        b, root = self.b, self.root
+        """The run for ``planned`` and ``held``.
+
+        The plan changes a little at a time, so the run resumes from the first
+        quarter in which the inputs differ from those of the run before it, and
+        ends as soon as the content is the one of that run again after the last
+        quarter in which they differ: what lies before and after is the same
+        arithmetic, not recomputed.
+        """
+        n = len(self.quarters)
+        root, full = self.root, self.full
+        nets, qualifies = self._net, self._qualifies
+        blocks = self.b.discharge_blocks
+        planned_now = list(planned)
+        held_now = list(held)
+        start = 0
         content = self.start
         before: list[float] = []
         shortfall: list[float] = []
-        for i, q in enumerate(self.quarters):
+        last = self._last
+        stop = n
+        run: _Run | None = None
+        if last is not None:
+            planned_then, held_then, run = last
+            start = next(
+                (
+                    i
+                    for i in range(n)
+                    if planned_now[i] != planned_then[i] or held_now[i] != held_then[i]
+                ),
+                n,
+            )
+            if start == n:
+                return run
+            stop = next(
+                i
+                for i in range(n - 1, -1, -1)
+                if planned_now[i] != planned_then[i] or held_now[i] != held_then[i]
+            )
+            content = run.before[start]
+            before = run.before[:start]
+            shortfall = run.shortfall[:start]
+        for i in range(start, n):
+            if i > stop and run is not None and content == run.before[i]:
+                before.extend(run.before[i:])
+                shortfall.extend(run.shortfall[i:])
+                content = run.end
+                break
             before.append(content)
-            hours = self.hours[i]
-            net = (q.load_w - q.pv_w - q.support_w) * hours / 1000.0
+            net = nets[i]
             missing = 0.0
-            if planned[i] > 0.0:
+            grid = planned_now[i]
+            if grid > 0.0:
                 # The House's own net load comes from the grid: the quarter
                 # qualifies, so that is no shortfall.
-                content = min(content + planned[i] * root, self.full)
-            elif held[i] and q.qualifies and b.discharge_blocks:
+                content = min(content + grid * root, full)
+            elif held_now[i] and blocks and qualifies[i]:
                 # Held: PV surplus may charge the battery, a deficit is bought.
                 if net < 0.0:
-                    content = min(content - net * root, self.full)
+                    content = min(content - net * root, full)
             elif net > 0.0:
                 delivered = min(net, content * root)
                 content -= delivered / root
-                if not q.qualifies:
+                if not qualifies[i]:
                     missing = net - delivered
             elif net < 0.0:
-                content = min(content - net * root, self.full)
+                content = min(content - net * root, full)
             shortfall.append(missing if missing > _EPSILON else 0.0)
-        return _Run(shortfall, before, content)
+        result = _Run(shortfall, before, content)
+        self._last = (planned_now, held_now, result)
+        return result
 
 
 def plan_charging(
@@ -755,19 +796,24 @@ def _reason(
     shortfalls = [i for i, s in enumerate(first.shortfall) if s > 0.0]
     if not shortfalls:
         return PlanReason.NO_SHORTFALL
-    last = shortfalls[-1]
-    qualifying = [j for j in range(last) if series[j].qualifies]
-    if not qualifying:
-        return PlanReason.NO_QUALIFYING_SLOT
+    # Without planned charging every shortfall was given up on, and a shortfall
+    # may only be covered by quarters after the one given up on before it.
     b = model.b
-    if not b.ignore_efficiency and not any(
-        series[j].price <= model.efficiency * series[s].price + _EPSILON
-        for s in shortfalls
-        for j in qualifying
-        if j < s
-    ):
+    efficiency = False
+    for k, s in enumerate(shortfalls):
+        after = shortfalls[k - 1] if k else -1
+        candidates = [j for j in range(after + 1, s) if series[j].qualifies]
+        if not candidates:
+            continue
+        if b.ignore_efficiency or any(
+            series[j].price <= model.efficiency * series[s].price + _EPSILON
+            for j in candidates
+        ):
+            return PlanReason.AT_TARGET
+        efficiency = True
+    if efficiency:
         return PlanReason.BLOCKED_BY_EFFICIENCY
-    return PlanReason.AT_TARGET
+    return PlanReason.NO_QUALIFYING_SLOT
 
 
 def _peak(run: _Run, window: int) -> float:
@@ -918,30 +964,47 @@ def _cover_one(
 
 def _feasible(model: _Model, planned: list[float], j: int, amount: float) -> float:
     """The most of ``amount`` that can be added at ``j`` without any planned
-    quarter ending above the Charge Target."""
+    quarter ending above the Charge Target.
+
+    A kWh more at ``j`` raises the content of a later quarter by at most ``e``, so
+    stepping down by the excess divided by ``e`` never passes the answer; it is
+    found in a few steps, from above. Bisection is the fallback.
+    """
     if amount <= _EPSILON:
         return 0.0
-    if _within_target(model, planned, j, amount):
-        return amount
+    for _ in range(_STEPS):
+        excess = _excess(model, planned, j, amount)
+        if excess <= 0.0:
+            return amount
+        amount -= excess / model.root
+        if amount <= 0.0:
+            return 0.0
     low, high = 0.0, amount
     for _ in range(40):
         middle = (low + high) / 2.0
-        if _within_target(model, planned, j, middle):
+        if _excess(model, planned, j, middle) <= 0.0:
             low = middle
         else:
             high = middle
     return low
 
 
-def _within_target(model: _Model, planned: list[float], j: int, amount: float) -> bool:
+def _excess(model: _Model, planned: list[float], j: int, amount: float) -> float:
+    """How far above the Charge Target the highest planned quarter ends if
+    ``amount`` is added at ``j``; not above 0 when none does."""
     planned[j] += amount
     try:
         run = model.run(planned)
     finally:
         planned[j] -= amount
     limit = model.target + _FIT
-    return all(
-        run.before[k] + (planned[k] + (amount if k == j else 0.0)) * model.root <= limit
-        for k in range(len(planned))
-        if planned[k] > 0.0 or k == j
+    return max(
+        (
+            run.before[k]
+            + (planned[k] + (amount if k == j else 0.0)) * model.root
+            - limit
+            for k in range(len(planned))
+            if planned[k] > 0.0 or k == j
+        ),
+        default=0.0,
     )

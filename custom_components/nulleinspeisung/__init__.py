@@ -2,24 +2,40 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
-from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .battery_gateway import BatteryGateway
-from .const import CONF_PASSWORD, CONF_TIBBER_TOKEN, CONF_URL, SUBENTRY_TYPE_DTU
+from .const import (
+    CONF_PASSWORD,
+    CONF_TIBBER_TOKEN,
+    CONF_URL,
+    DOMAIN,
+    SUBENTRY_TYPE_DTU,
+)
 from .coordinator import DtuCoordinator
 from .devices import DeviceSynchroniser
-from .dtu_client import DtuClient
+from .dtu_client import DtuAuthError, DtuClient, DtuConnectionError
 from .forecast import HouseForecast
 from .forecast_source import async_create_client as async_create_forecast_client
 from .house import House, HouseConfig, house_subentries
+from .house_control import ON_FAILURE_FULL
 from .house_knowledge import HouseKnowledge
 from .house_prices import HousePrices
 from .price_source import async_create_client
+
+_LOGGER = logging.getLogger(__name__)
+
+HELD_LIMITS = "held_limits"
+"""Key in ``hass.data[DOMAIN]``: the Inverters each unloaded entry had limited."""
+REMOVE_TIMEOUT = 8.0
+"""Seconds a removed entry is given to ask its DTUs for 100 %."""
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -126,29 +142,94 @@ async def async_setup_entry(
         entry.async_on_unload(house.override_control.stop)
         house.override_control.start()
         if house.grid_charging is not None:
+            await house.grid_charging.async_load()
             entry.async_on_unload(house.grid_charging.stop)
             house.grid_charging.start()
         if house.grid_publisher is not None:
             entry.async_on_unload(house.grid_publisher.stop)
             house.grid_publisher.start()
 
-    @callback
-    def release_on_stop(_event: Event) -> None:
-        # Before the MQTT connections close, give the GX its overrides back.
+    async def release_on_stop(_event: Event) -> None:
+        # Before the MQTT connections close, give the GX its overrides back, and
+        # the Inverters 100 % if the House is set to.
         for house in houses.values():
             house.override_control.release_ours()
+        # Only for a House set to give 100 % on failure: a restart of Home Assistant
+        # must not export; the limits are taken over again at start.
+        await asyncio.gather(
+            *(
+                house.control.async_release_limits()
+                for house in houses.values()
+                if house.control.on_failure == ON_FAILURE_FULL
+            )
+        )
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, release_on_stop)
     )
+    # What an earlier unload left for a removal belongs to the entry that was set up
+    # again now: a reload.
+    _held(hass).pop(entry.entry_id, None)
     return True
+
+
+def _held(hass: HomeAssistant) -> dict[str, set[str]]:
+    """The serials of the Inverters each unloaded entry had limited."""
+    return hass.data.setdefault(DOMAIN, {}).setdefault(HELD_LIMITS, {})
 
 
 async def async_unload_entry(
     hass: HomeAssistant, entry: NulleinspeisungConfigEntry
 ) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry.
+
+    A reload keeps the limits: the House sets up again and takes them over. A
+    disabled entry gives its Inverters 100 % here; a removed one in
+    ``async_remove_entry``, for which the Inverters it had limited are kept.
+    """
+    data = getattr(entry, "runtime_data", None)
+    if data is not None:
+        if entry.disabled_by is not None:
+            await asyncio.gather(
+                *(
+                    house.control.async_release_limits()
+                    for house in data.houses.values()
+                )
+            )
+        else:
+            limited = {
+                serial
+                for house in data.houses.values()
+                for serial in house.control.limited_serials
+            }
+            if limited:
+                _held(hass)[entry.entry_id] = limited
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(
+    hass: HomeAssistant, entry: NulleinspeisungConfigEntry
+) -> None:
+    """Give the Inverters the removed entry had limited 100 %, best effort."""
+    held = _held(hass).pop(entry.entry_id, None)
+    if not held:
+        return
+    session = async_get_clientsession(hass)
+    try:
+        async with asyncio.timeout(REMOVE_TIMEOUT):
+            for subentry in entry.subentries.values():
+                if subentry.subentry_type != SUBENTRY_TYPE_DTU:
+                    continue
+                client = DtuClient(
+                    session, subentry.data[CONF_URL], subentry.data[CONF_PASSWORD]
+                )
+                snapshot = await client.async_fetch_snapshot()
+                for serial in held:
+                    inverter = snapshot.inverters.get(serial)
+                    if inverter is not None and inverter.reachable:
+                        await client.async_set_limit(serial, 100)
+    except TimeoutError, DtuConnectionError, DtuAuthError:
+        _LOGGER.warning("Could not give the Inverters 100 %% on removal", exc_info=True)
 
 
 async def _async_reload_on_change(

@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, tzinfo
 from enum import StrEnum
 
-from .charging_planner import SLOT, ChargingPlan, PlanReason
+from .charging_planner import ChargingPlan, PlanReason
+from .quarters import SLOT
 
 _EPSILON = 1e-6
 

@@ -38,14 +38,14 @@
           "description": "Ändere die Adresse oder das Administrator-Passwort dieser DTU.",
           "data": {
             "url": "Adresse",
-            "password": "Passwort",
+            "password": "Passwort (leer lassen, um das gespeicherte zu behalten)",
             "sun_angle": "Sonnenwinkel",
             "staleness_time": "Veraltungszeit (Sekunden)",
             "restart_wait": "Wartezeit nach Neustart (Sekunden)"
           },
           "data_description": {
             "url": "Adresse der DTU, zum Beispiel 192.168.1.50 oder http://opendtu.local",
-            "password": "Administrator-Passwort der DTU (Benutzer admin)",
+            "password": "Administrator-Passwort der DTU (Benutzer admin). Leer lassen, um das gespeicherte Passwort zu behalten.",
             "sun_angle": "Sonnenhöhe in Grad, ab der die Wechselrichter Daten liefern müssen (Standard 5)",
             "staleness_time": "Sekunden ohne frische Wechselrichter-Daten, nach denen die DTU als hängend gilt (Standard 120)",
             "restart_wait": "Wartezeit nach einem Neustart in Sekunden, bevor die DTU erneut beurteilt wird; mindestens Veraltungszeit plus 30 Sekunden (Standard 180)"

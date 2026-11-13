@@ -24,9 +24,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
+from .quarters import SLOT, quarter_start
+
 _LOGGER = logging.getLogger(__name__)
 
-SLOT = timedelta(minutes=15)
 MIN_COVERED = SLOT.total_seconds() / 2
 """Seconds of a quarter-hour that valid samples must cover to record it."""
 MAX_SAMPLE_COVER = 30.0
@@ -54,12 +55,6 @@ class _Slot:
     total: float = 0.0
     count: int = 0
     covered: float = 0.0
-
-
-def quarter_start(moment: datetime) -> datetime:
-    """The start (UTC) of the quarter-hour that ``moment`` lies in."""
-    moment = dt_util.as_utc(moment)
-    return moment.replace(minute=moment.minute // 15 * 15, second=0, microsecond=0)
 
 
 class QuarterRecorder:

@@ -10,7 +10,8 @@ Replays recorded quarter-hours of one House through the Charging Planner.
         [--prices-known-at 13:00] [--modes current none price-level-block]
 
 The planner is loaded from `custom_components/nulleinspeisung/charging_planner.py`
-by file path, so Home Assistant is not imported.
+(with `quarters.py`, which it imports) without the package's `__init__`, so Home
+Assistant is not imported.
 
 ### Input
 

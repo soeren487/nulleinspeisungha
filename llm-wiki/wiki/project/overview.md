@@ -4,7 +4,7 @@ title: Overview
 description: What nulleinspeisungha is, the installation it controls, and where the project stands.
 tags: [project]
 status: draft
-generated: { by: claude-code/claude-opus-5-5, at: 2026-10-04T22:10:00Z }
+generated: { by: claude-code/claude-sonnet-5-5, at: 2026-11-13T12:00:00Z }
 sources:
   - id: initial-requirements
     resource: ../../raw/2026-10-04-initial-requirements.md
@@ -22,7 +22,7 @@ A Home Assistant custom integration that applies a zero feed-in strategy to Soer
 It has two jobs per house:[^initial-requirements]
 
 1. **Limit feed-in.** Keep grid feed-in at or below a configurable setpoint by setting the power limit of the house's inverters, at a configurable update interval.
-2. **Charge from the grid when cheap.** Take over the existing Node-RED strategy that charges the AC battery from the grid when Tibber rates the price as cheap, aiming for a full battery by the end of the coming night.
+2. **Charge from the grid when it pays.** Took over the Node-RED strategy that charged the AC battery from the grid when Tibber rated the price as cheap. Since ticket 32 the integration plans the battery's content over all known prices and buys beforehand only the energy it would otherwise have to buy at prices it cannot choose (shortfall planning); since ticket 37 it holds the battery only when its energy is needed at a dearer time. Details: [Requirements decisions](requirements-decisions.md).
 
 It also has to detect an OpenDTU that has stopped exchanging data with its inverters and restart it automatically.[^initial-requirements]
 
@@ -41,11 +41,20 @@ Shared across both houses:[^initial-requirements]
 
 # State
 
-- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md`; tickets live under `.scratch/nulleinspeisung/issues/`, each with its status. As of 2026-10-24 all planned features are built and released up to 0.7.0 (curtailment with battery priority, stuck-DTU restart, grid power published to both Victron systems, grid charging with efficiency check and discharge block, PV forecast, expected load, DC battery support); ticket 31 (usable energy above the Victron's minimum charge level) is released as 0.7.1, and ticket 32 (grid charging planned against shortfalls in expensive periods) was released in 0.8.0 and ticket 33 (a daily charge to 95 % so that BatteryLife lowers its minimum) in 0.9.0; ticket 34 (safety buffer against a forecast that does not come true) is merged but not released. Open: 16 (one observed night per house), 23 (on hold for a firmware update) and 30 (fewer limit commands when the battery is full). The integration runs on the owner's production Home Assistant and his Node-RED flow is off since 2026-10-06. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
+- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md`; tickets live under `.scratch/nulleinspeisung/issues/`, each with its status. As of 2026-11-13 all planned features are built. Released up to 0.11.0 (see `CHANGELOG.md`); the most recent releases brought shortfall planning (0.8.0), the BatteryLife top-up (0.9.0), the Safety Buffer (0.10.0) and steady buffer charging (0.11.0).
+- On the branch `review-2026-11` and unreleased: tickets 37 to 41 are done (discharge block on demand, BatteryLife top-up level default 100 %, robustness fixes, the reason sensor, the plan as attributes and diagnostics, the replay tool); ticket 42 (findings of the code review of 2026-11-13: control and load fixes, documentation) is in work.
+- Open: 30 (fewer limit commands when the battery is full) waits for observation in spring 2027. Closed: 16 (Node-RED cutover, resolved), 23 (slew rate per inverter, closed as not needed).
+- The integration runs on the owner's production Home Assistant and his Node-RED flow is off since 2026-10-06. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
+
+# Tools and CI
+
+- `tools/replay.py` replays recorded quarter-hours of one House through the charging planner and compares cost against two baselines (no grid charging; the price-level block of before ticket 37); `tools/export_history.py` writes its input from Home Assistant's history. Real exports go to `llm-wiki/private/`. See `tools/README.md`.
+- The GitHub Actions workflow `.github/workflows/ci.yml` runs on pushes to `main`, on pull requests and weekly: tests and linters on the pinned Home Assistant, the tests on the oldest supported Home Assistant, and hassfest and HACS validation.
+- The README describes the integration for users, with entity tables in English and German.
 
 # Related
 
 - [Development workflow](development-workflow.md)
 
 [^initial-requirements]: Initial requirements stated by Soeren
-[^repo-state]: Repository and installation state, last updated 2026-10-24
+[^repo-state]: Repository and installation state, last updated 2026-11-13

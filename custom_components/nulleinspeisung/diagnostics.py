@@ -2,9 +2,12 @@
 identifies the installation.
 
 Addresses, host names, passwords, tokens, portal ids, coordinates, topics, home
-ids and unique ids are redacted; the serials of DTUs and Inverters are replaced
-by stable placeholders (``dtu-1``, ``inverter-1``), numbered in the order of their
-sorted serials, so that the same serial has the same placeholder everywhere.
+ids and unique ids are redacted; the serials of DTUs and Inverters, the entity ids
+of the Grid Meter and of the DC Battery sensors (a default Shelly id holds its MAC)
+and the titles of Houses are replaced by stable placeholders (``dtu-1``,
+``inverter-1``, ``grid-meter``, ``dc-battery-sensor-1``, ``house-1``), numbered in
+the order of their sorted values, so that the same value has the same placeholder
+everywhere.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ from . import NulleinspeisungConfigEntry
 from .const import (
     CONF_BATTERY_BACKED,
     CONF_DC_BATTERIES,
+    CONF_GRID_METER,
     CONF_GRID_METER_TOPIC,
     CONF_GX_HOST,
     CONF_GX_PORTAL_ID,
@@ -34,6 +38,7 @@ from .const import (
     CONF_TIBBER_TOKEN,
     CONF_URL,
     SUBENTRY_TYPE_DTU,
+    SUBENTRY_TYPE_HOUSE,
 )
 from .house import House
 
@@ -59,10 +64,18 @@ REDACTED = "**REDACTED**"
 class _Placeholders:
     """Stable placeholders for serials."""
 
-    def __init__(self, dtus: set[str], inverters: set[str]) -> None:
+    def __init__(
+        self,
+        dtus: set[str],
+        inverters: set[str],
+        sensors: set[str] = frozenset(),
+        houses: set[str] = frozenset(),
+    ) -> None:
         self._names = {
             **{s: f"dtu-{i}" for i, s in enumerate(sorted(dtus), 1)},
             **{s: f"inverter-{i}" for i, s in enumerate(sorted(inverters), 1)},
+            **{s: f"dc-battery-sensor-{i}" for i, s in enumerate(sorted(sensors), 1)},
+            **{s: f"house-{i}" for i, s in enumerate(sorted(houses), 1)},
         }
 
     def __call__(self, serial: str) -> str:
@@ -90,9 +103,11 @@ def _subentry_data(data: dict[str, Any], placeholder: _Placeholders) -> dict[str
     for key in (CONF_INVERTERS, CONF_BATTERY_BACKED):
         if key in out:
             out[key] = [placeholder(s) for s in out[key]]
+    if CONF_GRID_METER in out:
+        out[CONF_GRID_METER] = "grid-meter"
     if CONF_DC_BATTERIES in out:
         out[CONF_DC_BATTERIES] = {
-            placeholder(serial): list(entity_ids)
+            placeholder(serial): [placeholder(e) for e in entity_ids]
             for serial, entity_ids in (data.get(CONF_DC_BATTERIES) or {}).items()
         }
     return out
@@ -101,7 +116,7 @@ def _subentry_data(data: dict[str, Any], placeholder: _Placeholders) -> dict[str
 def _house(house: House, placeholder: _Placeholders) -> dict[str, Any]:
     config = house.config
     result: dict[str, Any] = {
-        "name": config.name,
+        "name": placeholder(config.name),
         "settings": {
             "grid_meter_sign": config.grid_meter_sign,
             "inverters": [placeholder(s) for s in config.inverters],
@@ -179,7 +194,18 @@ async def async_get_config_entry_diagnostics(
         inverter_serials.update(subentry.data.get(CONF_INVERTERS, ()))
         inverter_serials.update(subentry.data.get(CONF_BATTERY_BACKED, ()))
         inverter_serials.update((subentry.data.get(CONF_DC_BATTERIES) or {}).keys())
-    placeholder = _Placeholders(dtu_serials, inverter_serials)
+    sensors = {
+        entity_id
+        for subentry in entry.subentries.values()
+        for entity_ids in (subentry.data.get(CONF_DC_BATTERIES) or {}).values()
+        for entity_id in entity_ids
+    }
+    houses = {
+        s.title
+        for s in entry.subentries.values()
+        if s.subentry_type == SUBENTRY_TYPE_HOUSE
+    }
+    placeholder = _Placeholders(dtu_serials, inverter_serials, sensors, houses)
     dtu_names = {
         subentry_id: placeholder(sub.unique_id or "")
         for subentry_id, sub in entry.subentries.items()
@@ -193,7 +219,12 @@ async def async_get_config_entry_diagnostics(
             "subentries": [
                 {
                     "type": sub.subentry_type,
-                    "title": dtu_names.get(subentry_id, sub.title),
+                    "title": dtu_names.get(subentry_id)
+                    or (
+                        placeholder(sub.title)
+                        if sub.subentry_type == SUBENTRY_TYPE_HOUSE
+                        else sub.title
+                    ),
                     "data": _subentry_data(dict(sub.data), placeholder),
                 }
                 for subentry_id, sub in entry.subentries.items()

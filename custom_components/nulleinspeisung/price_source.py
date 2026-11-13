@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
-from itertools import pairwise
 from typing import Any
 
 import aiohttp
@@ -16,9 +15,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, TIBBER_REQUEST_TIMEOUT, TIBBER_URL
-
-DEFAULT_SLOT = timedelta(minutes=15)
-"""Length of a price slot when the data cannot tell (fewer than two points)."""
+from .quarters import slot_length
 
 HOMES_QUERY = "{ viewer { homes { id appNickname timeZone } } }"
 
@@ -80,13 +77,6 @@ def _utc(moment: datetime) -> datetime:
     their wall clock; in UTC every comparison is of real time.
     """
     return moment.astimezone(UTC)
-
-
-def slot_length(prices: Sequence[PricePoint]) -> timedelta:
-    """Length of one slot, taken from the data (the smallest step between starts)."""
-    steps = [_utc(b.start) - _utc(a.start) for a, b in pairwise(prices)]
-    steps = [step for step in steps if step > timedelta(0)]
-    return min(steps) if steps else DEFAULT_SLOT
 
 
 def current_price(prices: Sequence[PricePoint], now: datetime) -> PricePoint | None:

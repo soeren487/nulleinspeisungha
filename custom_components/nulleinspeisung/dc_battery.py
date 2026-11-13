@@ -20,7 +20,7 @@ from homeassistant.core import State
 
 from .expected_load_model import SLOTS_PER_DAY, slot_of
 from .quarter_recorder import QuarterRecord
-from .sunrise_energy import slots
+from .quarters import SLOT, slots
 
 CONVERSION_FACTOR = 0.85
 """Share of the energy stored in a DC Battery that comes out of its Inverter as AC
@@ -173,5 +173,6 @@ def dc_battery_support(
             delivered = min(wanted, budget)
             budget -= delivered
             total += delivered
-            watts[slot] = watts.get(slot, 0.0) + delivered * 1000.0 / hours
+            span = (slot + SLOT - max(slot, now)).total_seconds() / 3600.0
+            watts[slot] = watts.get(slot, 0.0) + delivered * 1000.0 / span
     return DcSupport(watts, total)

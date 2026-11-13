@@ -25,7 +25,8 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
 
-from custom_components.nulleinspeisung import solar, sunrise_energy
+from custom_components.nulleinspeisung import solar
+from custom_components.nulleinspeisung.surplus import forecast_surplus
 from tests.conftest import (
     HOME_1,
     DtuNetwork,
@@ -224,7 +225,7 @@ async def test_the_sensors_show_the_values_of_the_calculation(
     deadline = _deadline()
     load = {start: 100.0 for start, _ in house.expected_load.upcoming()}
     pv = {s.start: s.watts for s in house.forecast.slots}
-    surplus = sunrise_energy.forecast_surplus(deadline, load, pv, 0.7)
+    surplus = forecast_surplus(deadline, load, pv, 0.7)
     assert surplus is not None
     assert surplus > 0.5
     assert _kwh(hass, "forecast_surplus") == pytest.approx(surplus, abs=1e-3)

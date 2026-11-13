@@ -1,4 +1,5 @@
-"""Sensors of an Inverter."""
+"""Sensors of the DTUs, their Inverters, the Houses, their prices, forecasts, Expected
+Load, AC Battery and Grid Charging."""
 
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTime,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
@@ -30,7 +31,7 @@ from homeassistant.util import dt as dt_util
 
 from . import NulleinspeisungConfigEntry
 from .battery_gateway import minimum_floor
-from .charging_reason import ReasonCode
+from .charging_reason import ChargingReason, ReasonCode
 from .const import DOMAIN
 from .coordinator import DtuCoordinator
 from .curtailment import ControlState
@@ -45,10 +46,10 @@ from .entity import (
     setup_house_entities,
     setup_inverter_entities,
 )
-from .forecast import slot_start
 from .grid_charging import GridChargingState
 from .house import House
 from .price_source import PriceLevel
+from .quarters import quarter_start
 
 MAX_LISTED_SLOTS = 96
 """Planned slots listed in an attribute; a day has 96 quarter-hours."""
@@ -733,7 +734,7 @@ class ExpectedLoadSensor(_ExpectedLoadSensor):
     @property
     def native_value(self) -> float:
         """Expected consumption in W."""
-        return round(self.house.expected_load.at(slot_start(dt_util.utcnow())), 1)
+        return round(self.house.expected_load.at(quarter_start(dt_util.utcnow())), 1)
 
 
 class ExpectedLoadEnergySensor(_ExpectedLoadSensor):
@@ -839,20 +840,38 @@ class ChargingReasonSensor(ChargingEntity, SensorEntity):
     _attr_translation_key = "charging_reason"
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = tuple(code.value for code in ReasonCode)  # type: ignore[assignment]
+    _unrecorded_attributes = frozenset(
+        {"text", "text_de", "next_start", "shortfall_at", "held_until"}
+    )
+    """The sentences and the moments change all the time and are no history worth
+    keeping; the code and the figures are recorded."""
 
     def __init__(self, house: House) -> None:
         """Create the sensor."""
         super().__init__(house, "charging_reason", "sensor")
+        self._reason: ChargingReason | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Work out the reason before the first state is written."""
+        await super().async_added_to_hass()
+        self._reason = self.charging.reason()
+
+    @callback
+    def _handle_change(self, *_: object) -> None:
+        """Work out the reason once for the state and its attributes."""
+        self._reason = self.charging.reason()
+        super()._handle_change()
 
     @property
     def native_value(self) -> str:
         """The code of the reason."""
-        return self.charging.reason().code.value
+        reason = self._reason or self.charging.reason()
+        return reason.code.value
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """The sentence in English and German and the figures behind it."""
-        reason = self.charging.reason()
+        reason = self._reason or self.charging.reason()
 
         def iso(moment: datetime | None) -> str | None:
             return moment.isoformat() if moment is not None else None
@@ -878,7 +897,7 @@ class ChargingEnergySensor(ChargingEntity, SensorEntity):
 
     def __init__(self, house: House, key: str) -> None:
         """Create the sensor ``energy_to_buy``, ``energy_missing``,
-        ``expensive_shortfall`` or ``uncovered_shortfall``.
+        ``expensive_shortfall``, ``uncovered_shortfall`` or ``top_up_energy``.
         """
         super().__init__(house, key, "sensor")
         self._attr_translation_key = key

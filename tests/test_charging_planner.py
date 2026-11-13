@@ -23,8 +23,8 @@ from custom_components.nulleinspeisung.charging_planner import (
     Quarter,
     TopUp,
     plan_charging,
-    slot_length,
 )
+from custom_components.nulleinspeisung.quarters import slot_length
 
 T0 = datetime(2026, 10, 24, 0, 0, tzinfo=UTC)
 QUARTER = timedelta(minutes=15)
@@ -299,6 +299,22 @@ def test_blocked_by_efficiency_is_not_no_qualifying_slot() -> None:
     assert nothing.reason is PlanReason.NO_QUALIFYING_SLOT
     assert nothing.shortfall == pytest.approx(0.5)
     assert nothing.uncovered == pytest.approx(0.5)
+
+
+def test_the_reason_is_efficiency_when_an_earlier_shortfall_cuts_off_a_later() -> None:
+    """The only qualifying quarter-hours (0.20) are before both shortfalls. The
+    first (0.22, limit 0.1716) is given up on for the efficiency; the second (0.40,
+    limit 0.312, which 0.20 would pass) may only be covered by quarter-hours after
+    the first, and there are none. The battery is empty: not "at target"."""
+    quarters = day(
+        ("00:00", "01:00", 0.20, True, 0.0),
+        ("01:00", "02:00", 0.22, False, 1000.0),
+        ("02:00", "03:00", 0.40, False, 500.0),
+    )
+    result = plan_charging(T0, quarters, at_floor())
+    assert result.slots == ()
+    assert result.reason is PlanReason.BLOCKED_BY_EFFICIENCY
+    assert result.uncovered == pytest.approx(result.shortfall)
 
 
 def test_a_qualifying_quarter_hour_after_the_shortfall_does_not_help() -> None:
