@@ -10,7 +10,7 @@ Terms in capitals (House, Inverter Limit, Curtailment, Charging Plan, ...) are d
 
 ## Status
 
-Version 0.11.0 (see [CHANGELOG.md](CHANGELOG.md)). The control features are in production use on the owner's installation. Everything that sets inverter limits or writes to the battery is switchable per House.
+Version 0.12.0 (see [CHANGELOG.md](CHANGELOG.md)). The control features are in production use on the owner's installation. Everything that sets inverter limits or writes to the battery is switchable per House.
 
 ## Requirements
 
