@@ -41,14 +41,14 @@ Shared across both houses:[^initial-requirements]
 
 # State
 
-- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md`; tickets live under `.scratch/nulleinspeisung/issues/`, each with its status. As of 2026-11-13 all planned features are built. Released up to 0.12.0 (see `CHANGELOG.md`); the most recent releases brought shortfall planning (0.8.0), the BatteryLife top-up (0.9.0), the Safety Buffer (0.10.0) steady buffer charging (0.11.0) and, in 0.12.0, the results of the project review of 2026-11-13 (tickets 37 to 42: discharge block on demand, BatteryLife top-up level default 100 %, robustness fixes, the reason sensor, the plan as attributes, diagnostics, the replay tool, CI).
+- Requirements are settled: see [Requirements decisions](requirements-decisions.md). The spec is `.scratch/nulleinspeisung/spec.md`; tickets live under `.scratch/nulleinspeisung/issues/`, each with its status. As of 2026-11-13 all planned features are built. Released up to 0.12.1 (see `CHANGELOG.md`; 0.12.1 holds the PV Forecast fixes of ticket 43); the most recent releases brought shortfall planning (0.8.0), the BatteryLife top-up (0.9.0), the Safety Buffer (0.10.0) steady buffer charging (0.11.0) and, in 0.12.0, the results of the project review of 2026-11-13 (tickets 37 to 42: discharge block on demand, BatteryLife top-up level default 100 %, robustness fixes, the reason sensor, the plan as attributes, diagnostics, the replay tool, CI).
 - Open: 30 (fewer limit commands when the battery is full) waits for observation in spring 2027. Closed: 16 (Node-RED cutover, resolved), 23 (slew rate per inverter, closed as not needed).
 - The integration runs on the owner's production Home Assistant and his Node-RED flow is off since 2026-10-06. The repository is public on GitHub (`soeren487/nulleinspeisungha`), so nothing secret or private may be committed.[^repo-state]
 
 # Tools and CI
 
 - `tools/replay.py` replays recorded quarter-hours of one House through the charging planner and compares cost against two baselines (no grid charging; the price-level block of before ticket 37); `tools/export_history.py` writes its input from Home Assistant's history. Real exports go to `llm-wiki/private/`. See `tools/README.md`.
-- The GitHub Actions workflow `.github/workflows/ci.yml` runs on pushes to `main`, on pull requests and weekly: tests and linters on the pinned Home Assistant, the tests on the oldest supported Home Assistant, and hassfest and HACS validation.
+- The GitHub Actions workflow `.github/workflows/ci.yml` runs on pushes to `main`, on pull requests and weekly: tests and linters on the pinned Home Assistant, the tests on the oldest supported Home Assistant, and hassfest validation (the HACS check was removed on 2026-11-15: the owner wants no licence and no repository topics, the integration is specific to his installation).
 - The README describes the integration for users, with entity tables in English and German.
 
 # Related

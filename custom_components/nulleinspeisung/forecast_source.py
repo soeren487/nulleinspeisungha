@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, NamedTuple
+from typing import Any
 
 import aiohttp
 from homeassistant.core import HomeAssistant
@@ -11,19 +11,11 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.loader import async_get_integration
 
 from .const import DOMAIN, OPEN_METEO_REQUEST_TIMEOUT, OPEN_METEO_URL
+from .forecast_model import IrradiancePoint
 
 
 class OpenMeteoError(Exception):
     """Open-Meteo could not be reached or gave an answer that is not usable."""
-
-
-class IrradiancePoint(NamedTuple):
-    """The expected shortwave irradiance of one quarter-hour."""
-
-    start: datetime
-    """Timezone-aware (UTC) start of the quarter-hour."""
-    irradiance: float
-    """Mean irradiance in W/m²."""
 
 
 class OpenMeteoClient:
@@ -37,15 +29,15 @@ class OpenMeteoClient:
     async def async_irradiance(
         self, latitude: float, longitude: float
     ) -> tuple[IrradiancePoint, ...]:
-        """Today's and tomorrow's irradiance per quarter-hour, sorted by start.
+        """Three days of irradiance per quarter-hour, sorted by start.
 
         Quarter-hours without a value are left out.
         """
         params = {
             "latitude": str(latitude),
             "longitude": str(longitude),
-            "minutely_15": "shortwave_radiation",
-            "forecast_days": "2",
+            "minutely_15": "shortwave_radiation,direct_radiation,diffuse_radiation",
+            "forecast_days": "3",
             "timeformat": "unixtime",
             "timezone": "UTC",
         }
@@ -73,11 +65,18 @@ def parse_irradiance(answer: Any) -> tuple[IrradiancePoint, ...]:
         block = answer["minutely_15"]
         times = block["time"]
         values = block["shortwave_radiation"]
-        if len(times) != len(values):
+        direct = block.get("direct_radiation") or [None] * len(times)
+        diffuse = block.get("diffuse_radiation") or [None] * len(times)
+        if not len(times) == len(values) == len(direct) == len(diffuse):
             raise ValueError("lengths differ")
         points = [
-            IrradiancePoint(datetime.fromtimestamp(int(t), UTC), float(v))
-            for t, v in zip(times, values, strict=True)
+            IrradiancePoint(
+                datetime.fromtimestamp(int(t), UTC),
+                float(v),
+                None if d is None else float(d),
+                None if f is None else float(f),
+            )
+            for t, v, d, f in zip(times, values, direct, diffuse, strict=True)
             if v is not None
         ]
     except (KeyError, TypeError, ValueError, OverflowError, OSError) as err:

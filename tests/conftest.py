@@ -810,7 +810,9 @@ class SimOpenMeteo:
     """Simulated Open-Meteo API at the HTTP boundary, answering with recorded data.
 
     The recorded answer covers 2026-10-04 and 2026-10-05 in UTC, 96 quarter-hours
-    each, whatever location is asked for.
+    each, whatever location is asked for; its direct and diffuse parts add up to the
+    shortwave value. ``three_days`` replaces it by an answer of three days that
+    starts at the same moment.
     """
 
     def __init__(self, aioclient_mock: MagicMock) -> None:
@@ -829,6 +831,14 @@ class SimOpenMeteo:
     def register(self) -> None:
         """(Re-)register the API; the DTU network's ``apply`` forgets it."""
         self._mock.get(re.compile(re.escape(OPEN_METEO_URL)), side_effect=self._answer)
+
+    def three_days(self) -> None:
+        """Serve three UTC days from 2026-10-04 on, as the request now asks for."""
+        answer = load_open_meteo_fixture("forecast_three_days.json")
+        start = int(datetime(2026, 10, 4, tzinfo=UTC).timestamp())
+        block = answer["minutely_15"]
+        block["time"] = [start + 900 * i for i in range(len(block["time"]))]
+        self.answer = answer
 
     @property
     def irradiance(self) -> list[float | None]:
@@ -871,11 +881,13 @@ def open_meteo(aioclient_mock: MagicMock) -> SimOpenMeteo:
 def seed_history(
     hass_storage: dict[str, Any],
     house_unique_id: str,
-    records: list[tuple[datetime, float, float | None, bool]],
+    records: list[tuple[Any, ...]],
 ) -> None:
     """Put production records into the storage of a House before it is set up.
 
-    Each record is (start, mean production in W, irradiance in W/m², curtailed).
+    Each record is (start, mean production in W, irradiance in W/m², curtailed),
+    optionally followed by the direct and diffuse irradiance as stored since the
+    split; rows of four are what earlier versions wrote.
     """
     key = f"{DOMAIN}.pv_history_{house_unique_id}"
     hass_storage[key] = {
@@ -883,10 +895,7 @@ def seed_history(
         "minor_version": 1,
         "key": key,
         "data": {
-            "records": [
-                [int(start.timestamp()), production, irradiance, curtailed]
-                for start, production, irradiance, curtailed in records
-            ]
+            "records": [[int(start.timestamp()), *rest] for start, *rest in records]
         },
     }
 

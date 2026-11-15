@@ -30,12 +30,13 @@ from .forecast_model import (
     Factors,
     ForecastSlot,
     HistoryRecord,
+    IrradiancePoint,
     convert,
     history_days,
     is_usable,
     learn,
 )
-from .forecast_source import IrradiancePoint, OpenMeteoClient, OpenMeteoError
+from .forecast_source import OpenMeteoClient, OpenMeteoError
 from .quarters import SLOT, quarter_start
 
 if TYPE_CHECKING:
@@ -57,6 +58,10 @@ MIN_COVERED = SLOT.total_seconds() / 2
 """Seconds of a quarter-hour that samples must cover for it to be recorded."""
 MAX_SAMPLE_COVER = 30.0
 """Seconds one sample may cover at most (a DTU delivers every 10 seconds)."""
+CURTAIL_SETTLE = 60.0
+"""Seconds after the House last held back a PV Inverter before samples count as
+clean again. An estimate of the ramp back to full power, during which production
+is still below what the panels could make."""
 STORAGE_VERSION = 1
 
 ISSUE_FORECAST_UNAVAILABLE = "pv_forecast_unavailable"
@@ -72,9 +77,15 @@ class _Slot:
     total: float = 0.0
     count: int = 0
     covered: float = 0.0
-    bad: bool = False
-    """A PV Inverter was unknown at some moment: the quarter-hour is not recorded."""
-    curtailed: bool = False
+    """Seconds covered by samples with a known production."""
+    clean_total: float = 0.0
+    clean_count: int = 0
+    clean_covered: float = 0.0
+    """Seconds covered by clean samples: known, not curtailed, settled."""
+
+
+def _optional(value: Any) -> float | None:
+    return None if value is None else float(value)
 
 
 def storage_key(house_unique_id: str) -> str:
@@ -115,11 +126,13 @@ class HouseForecast:
         self._started_at = dt_util.utcnow()
         self._last_success: datetime | None = None
         self._next_fetch: datetime | None = None
-        self._irradiance: dict[datetime, float] = {}
+        self._irradiance: dict[datetime, IrradiancePoint] = {}
         self._records: list[HistoryRecord] = []
         self._dirty = False
         self._slot: _Slot | None = None
         self._last_sample: datetime | None = None
+        self._curtailed_at: datetime | None = None
+        """When the House was last seen holding back a PV Inverter."""
         self.factors: Factors | None = None
         """The learned conversion; ``None`` while nothing can be learned yet."""
         self.history_days = 0
@@ -141,7 +154,7 @@ class HouseForecast:
     @property
     def irradiance(self) -> tuple[IrradiancePoint, ...]:
         """The known irradiance forecast, sorted by start."""
-        return tuple(IrradiancePoint(s, v) for s, v in sorted(self._irradiance.items()))
+        return tuple(p for _, p in sorted(self._irradiance.items()))
 
     @property
     def last_success(self) -> datetime | None:
@@ -153,7 +166,7 @@ class HouseForecast:
         """The PV Forecast of every known quarter-hour, past ones included."""
         if self.factors is None:
             return ()
-        return convert(self.factors, self._irradiance.items())
+        return convert(self.factors, self._irradiance.values())
 
     @property
     def future(self) -> tuple[ForecastSlot, ...]:
@@ -168,9 +181,14 @@ class HouseForecast:
         return next((s for s in self.slots if s.start == start), None)
 
     def energy_kwh(self, day: date) -> float | None:
-        """Expected production of a local day in kWh; ``None`` when unknown."""
+        """Expected production of a local day in kWh; ``None`` when unknown.
+
+        Unknown also when the known quarter-hours stop before the day ends: a
+        partial sum would look like a forecast of almost nothing.
+        """
+        end = dt_util.start_of_local_day(day + timedelta(days=1))
         chosen = [s for s in self.slots if dt_util.as_local(s.start).date() == day]
-        if not chosen:
+        if not chosen or chosen[-1].start < end - SLOT:
             return None
         return sum(s.watts for s in chosen) * SLOT_HOURS / 1000
 
@@ -227,13 +245,16 @@ class HouseForecast:
         records: list[HistoryRecord] = []
         for row in (stored or {}).get("records", []):
             try:
-                start, production, irradiance, curtailed = row
+                start, production, irradiance, curtailed, *parts = row
+                direct, diffuse = parts if parts else (None, None)
                 records.append(
                     HistoryRecord(
                         dt_util.utc_from_timestamp(float(start)),
                         float(production),
-                        None if irradiance is None else float(irradiance),
+                        _optional(irradiance),
                         bool(curtailed),
+                        _optional(direct),
+                        _optional(diffuse),
                     )
                 )
             except TypeError, ValueError:
@@ -254,6 +275,8 @@ class HouseForecast:
                         r.production,
                         r.irradiance,
                         r.curtailed,
+                        r.direct,
+                        r.diffuse,
                     ]
                     for r in self._records
                 ]
@@ -278,12 +301,10 @@ class HouseForecast:
 
     @callback
     def _handle_control(self) -> None:
-        """The control changed: remember that the House curtailed in this slot."""
+        """The control changed: remember when the House last held back production."""
         assert self._house is not None
-        if self._house.control.curtailing:
-            self._roll(dt_util.utcnow())
-            assert self._slot is not None
-            self._slot.curtailed = True
+        if self._house.control.curtailing_pv:
+            self._curtailed_at = dt_util.utcnow()
 
     def _roll(self, now: datetime) -> None:
         """Finish the observed quarter-hour if ``now`` is in a later one."""
@@ -296,14 +317,25 @@ class HouseForecast:
         self._slot = _Slot(start)
 
     def _finish(self, slot: _Slot) -> None:
-        if slot.bad or slot.count == 0 or slot.covered < MIN_COVERED:
+        """Record the quarter-hour: from its clean samples, else from all of them
+        as curtailed, else not at all."""
+        if slot.clean_count and slot.clean_covered >= MIN_COVERED:
+            production = slot.clean_total / slot.clean_count
+            curtailed = False
+        elif slot.count and slot.covered >= MIN_COVERED:
+            production = slot.total / slot.count
+            curtailed = True
+        else:
             return
+        point = self._irradiance.get(slot.start)
         self._records.append(
             HistoryRecord(
                 slot.start,
-                slot.total / slot.count,
-                self._irradiance.get(slot.start),
-                slot.curtailed,
+                production,
+                point.irradiance if point else None,
+                curtailed,
+                point.direct if point else None,
+                point.diffuse if point else None,
             )
         )
         self._dirty = True
@@ -313,31 +345,41 @@ class HouseForecast:
         self._notify()
 
     def _observe(self, now: datetime) -> None:
-        """Take one sample of the House's PV production."""
+        """Take one sample of the House's PV production.
+
+        The time since the previous sample is credited to this one, but only when
+        its production is known, and to the clean accumulation only when the
+        sample is clean.
+        """
         assert self._house is not None
         self._roll(now)
         slot = self._slot
         assert slot is not None
-        if self._house.control.curtailing:
-            slot.curtailed = True
+        if self._house.control.curtailing_pv:
+            self._curtailed_at = now
         production = self._house.pv_production_complete()
-        if production is None:
-            slot.bad = True
-        else:
-            slot.total += production
-            slot.count += 1
         since = max(self._last_sample or slot.start, slot.start)
-        slot.covered += min((now - since).total_seconds(), MAX_SAMPLE_COVER)
         self._last_sample = now
+        if production is None:
+            return
+        cover = min((now - since).total_seconds(), MAX_SAMPLE_COVER)
+        slot.total += production
+        slot.count += 1
+        slot.covered += cover
+        settled = (
+            self._curtailed_at is None
+            or (now - self._curtailed_at).total_seconds() >= CURTAIL_SETTLE
+        )
+        if settled:
+            slot.clean_total += production
+            slot.clean_count += 1
+            slot.clean_covered += cover
 
     async def _async_tick(self, _now: datetime | None = None) -> None:
         """A quarter-hour boundary: finish the quarter-hour, save, update."""
         if self._stopped:
             return
         now = dt_util.utcnow()
-        assert self._house is not None
-        if self._slot is not None and self._house.pv_production_complete() is None:
-            self._slot.bad = True
         self._roll(now)
         self._prune(now)
         self._recompute(now)
@@ -375,7 +417,7 @@ class HouseForecast:
             self._next_fetch = now + RETRY_AFTER
             return
         for point in points:
-            self._irradiance[point.start] = point.irradiance
+            self._irradiance[point.start] = point
         self._irradiance = {
             start: value
             for start, value in self._irradiance.items()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import PropertyMock, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -11,11 +12,16 @@ from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.nulleinspeisung.const import DOMAIN
+from custom_components.nulleinspeisung.diagnostics import (
+    async_get_config_entry_diagnostics,
+)
+from custom_components.nulleinspeisung.house_control import HouseControl
 from tests.conftest import (
     DtuNetwork,
     SimDtu,
     SimHouse,
     SimOpenMeteo,
+    load_open_meteo_fixture,
     seed_history,
     setup_entry,
 )
@@ -85,8 +91,13 @@ async def test_a_quarter_hour_of_steady_production_is_recorded(
     assert record.curtailed is False
     # Written to storage at the boundary, in the documented layout.
     assert stored_records(hass_storage) == [
-        [int(START.timestamp()), 500.0, 282.0, False]
+        [int(START.timestamp()), 500.0, 282.0, False, record.direct, record.diffuse]
     ]
+    recorded = load_open_meteo_fixture("forecast.json")["minutely_15"]
+    index = recorded["time"].index(int(START.timestamp()))
+    assert record.direct == recorded["direct_radiation"][index]
+    assert record.diffuse == recorded["diffuse_radiation"][index]
+    assert record.direct + record.diffuse == record.irradiance
     # One quarter-hour taught one factor: 500 W for 282 W/m².
     assert house.forecast.factors.by_hour[14] == 500.0 / 282.0
     await run(hass, freezer, 15 * 60)
@@ -164,14 +175,14 @@ async def test_a_quarter_hour_with_too_few_samples_is_skipped(
     assert [r.start for r in house.forecast.history] == [START + timedelta(minutes=15)]
 
 
-async def test_a_quarter_hour_in_which_a_dtu_was_down_is_skipped(
+async def test_a_failed_poll_in_the_middle_does_not_lose_the_quarter_hour(
     hass: HomeAssistant,
     dtu_network: DtuNetwork,
     open_meteo: SimOpenMeteo,
     hass_storage,
     freezer,
 ) -> None:
-    """Two minutes without the DTU spoil the quarter-hour although most is covered."""
+    """Two minutes without the DTU leave the samples around them: 500 W, clean."""
     sim = dtu()
     _, house = await setup(
         hass, dtu_network, open_meteo, freezer, hass_storage, sim=sim
@@ -183,9 +194,210 @@ async def test_a_quarter_hour_in_which_a_dtu_was_down_is_skipped(
     sim.down = False
     dtu_network.apply()
     await run(hass, freezer, 8 * 60)
+    [record] = house.forecast.history
+    assert record.start == START
+    assert abs(record.production - 500.0) < 0.001
+    assert record.curtailed is False
+
+
+async def test_a_quarter_hour_mostly_without_the_dtu_is_skipped(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """Nine minutes without the DTU leave less than half covered by known samples."""
+    sim = dtu()
+    _, house = await setup(
+        hass, dtu_network, open_meteo, freezer, hass_storage, sim=sim
+    )
+    await run(hass, freezer, 3 * 60)
+    sim.down = True
+    dtu_network.apply()
+    await run(hass, freezer, 9 * 60)
+    sim.down = False
+    dtu_network.apply()
+    await run(hass, freezer, 3 * 60)
     assert house.forecast.history == ()
     await run(hass, freezer, 15 * 60)
     assert [r.start for r in house.forecast.history] == [START + timedelta(minutes=15)]
+
+
+def curtailing_pv(flag: list[bool]):
+    """Make the House curtail its PV Inverters whenever ``flag[0]`` is true."""
+    return patch.object(
+        HouseControl,
+        "curtailing_pv",
+        new_callable=PropertyMock,
+        side_effect=lambda: flag[0],
+    )
+
+
+async def test_a_short_curtailment_episode_leaves_the_quarter_hour_clean(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """20 s of curtailment at 200 W, then the 60 s settle at 300 W: the record is the
+    mean of the clean samples, 500 W, and not curtailed."""
+    sim = dtu()
+    flag = [False]
+    with curtailing_pv(flag):
+        _, house = await setup(
+            hass, dtu_network, open_meteo, freezer, hass_storage, sim=sim
+        )
+        await run(hass, freezer, 5 * 60)
+        flag[0] = True
+        sim.inverters[0].power = 100.0
+        dtu_network.apply()
+        await run(hass, freezer, 20)
+        flag[0] = False
+        sim.inverters[0].power = 200.0
+        dtu_network.apply()
+        await run(hass, freezer, 50)
+        sim.inverters[0].power = 300.0
+        dtu_network.apply()
+        await run(hass, freezer, 15 * 60 - 5 * 60 - 70)
+    [record] = house.forecast.history
+    assert record.curtailed is False
+    assert abs(record.production - 500.0) < 0.001
+
+
+async def test_samples_inside_the_settle_time_are_left_out(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """One curtailed sample at 500 W, then 300 W for 50 s: those never count."""
+    sim = dtu()
+    flag = [False]
+    with curtailing_pv(flag):
+        _, house = await setup(
+            hass, dtu_network, open_meteo, freezer, hass_storage, sim=sim
+        )
+        await run(hass, freezer, 5 * 60)
+        flag[0] = True
+        await run(hass, freezer, 10)
+        flag[0] = False
+        sim.inverters[0].power = 100.0
+        dtu_network.apply()
+        await run(hass, freezer, 50)
+        sim.inverters[0].power = 300.0
+        dtu_network.apply()
+        await run(hass, freezer, 15 * 60 - 5 * 60 - 60)
+    [record] = house.forecast.history
+    assert record.curtailed is False
+    assert abs(record.production - 500.0) < 0.001
+
+
+async def test_a_quarter_hour_curtailed_for_more_than_half_is_recorded_as_curtailed(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """Curtailing for the first ten minutes: the clean rest covers too little, so
+    the mean of all samples is recorded, marked curtailed and not learned from."""
+    sim = dtu()
+    flag = [True]
+    with curtailing_pv(flag):
+        _, house = await setup(
+            hass,
+            dtu_network,
+            open_meteo,
+            freezer,
+            hass_storage,
+            prepared_history(),
+            sim=sim,
+        )
+        before = house.forecast.factors
+        sim.inverters[0].power = 100.0
+        dtu_network.apply()
+        await run(hass, freezer, 10 * 60)
+        flag[0] = False
+        sim.inverters[0].power = 300.0
+        dtu_network.apply()
+        await run(hass, freezer, 5 * 60)
+    [*_, record] = house.forecast.history
+    assert record.start == START
+    assert record.curtailed is True
+    assert 300.0 < record.production < 400.0
+    assert house.forecast.factors.by_hour == pytest.approx(before.by_hour)
+
+
+async def test_curtailing_ends_before_the_boundary_and_the_rest_is_clean_enough(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """Curtailing for the first five minutes and 60 s of settling leave nine minutes
+    clean: the quarter-hour is recorded clean, with the clean samples only."""
+    sim = dtu()
+    flag = [True]
+    with curtailing_pv(flag):
+        _, house = await setup(
+            hass, dtu_network, open_meteo, freezer, hass_storage, sim=sim
+        )
+        sim.inverters[0].power = 100.0
+        dtu_network.apply()
+        await run(hass, freezer, 5 * 60)
+        flag[0] = False
+        sim.inverters[0].power = 200.0
+        dtu_network.apply()
+        await run(hass, freezer, 50)
+        sim.inverters[0].power = 300.0
+        dtu_network.apply()
+        await run(hass, freezer, 9 * 60 + 10)
+    [record] = house.forecast.history
+    assert record.curtailed is False
+    assert abs(record.production - 500.0) < 0.001
+
+
+async def test_a_limit_on_a_battery_backed_inverter_alone_changes_nothing(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """The Battery-backed Inverter is limited all quarter-hour: still a clean record."""
+    sim = dtu()
+    freezer.move_to(START)
+    entry = await setup_entry(
+        hass,
+        dtu_network,
+        sim,
+        houses=[
+            SimHouse(
+                "Home",
+                inverters=[CARPORT, HALLE4, "116400000003"],
+                battery_backed=["116400000003"],
+            )
+        ],
+        open_meteo=open_meteo,
+    )
+    house = next(iter(entry.runtime_data.houses.values()))
+    control = house.control
+    control.curtailment = True
+    control._wanted["116400000003"] = 50
+    assert control.curtailing
+    assert not control.curtailing_pv
+    await run(hass, freezer, 15 * 60)
+    [record] = house.forecast.history
+    assert record.curtailed is False
+    assert abs(record.production - 500.0) < 0.001
+    control._wanted[CARPORT] = 50
+    assert control.curtailing_pv
+    control.curtailment = False
+    assert not control.curtailing_pv
 
 
 async def test_a_quarter_hour_without_a_forecast_is_recorded_but_teaches_nothing(
@@ -373,3 +585,109 @@ async def test_limits_held_down_only_by_the_response_reserve_are_not_curtailing(
     [record] = house.forecast.history[-1:]
     assert record.start == START
     assert record.curtailed is False
+
+
+async def test_a_store_of_four_value_rows_loads_and_is_saved_with_six(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """Rows written before the split load unchanged and still feed the single factor;
+    the next save writes six values, the old ones with the components unknown."""
+    history = prepared_history()
+    entry, house = await setup(
+        hass, dtu_network, open_meteo, freezer, hass_storage, history
+    )
+    assert len(house.forecast.history) == len(history)
+    assert all(r.direct is None and r.diffuse is None for r in house.forecast.history)
+    assert house.forecast.usable
+    assert house.forecast.factors.by_hour[10] == pytest.approx(0.6)
+    assert house.forecast.factors.split_by_hour == {}
+
+    await run(hass, freezer, 15 * 60)
+    rows = stored_records(hass_storage)
+    assert len(rows) == len(history) + 1
+    assert all(len(row) == 6 for row in rows)
+    assert rows[0][4:] == [None, None]
+    assert all(row[4] is not None and row[5] is not None for row in rows[-1:])
+
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    reloaded = next(iter(entry.runtime_data.houses.values())).forecast
+    assert reloaded.history == house.forecast.history
+    assert reloaded.history[-1].direct is not None
+
+
+async def test_the_pairs_are_learned_from_stored_components_and_used(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """Records made from known coefficients give the House's pair for the hour, and
+    the forecast of that hour follows the components of the irradiance forecast."""
+    records = []
+    for i in range(24):
+        direct, diffuse = 50.0 + 40.0 * (i % 5), 60.0 + 25.0 * ((i * 3) % 7)
+        start = datetime(2026, 10, 3, 14, 0, tzinfo=UTC) - timedelta(days=i // 4)
+        records.append(
+            (
+                start + timedelta(minutes=15 * (i % 4)),
+                1.5 * direct + 0.3 * diffuse,
+                direct + diffuse,
+                False,
+                direct,
+                diffuse,
+            )
+        )
+    _, house = await setup(
+        hass, dtu_network, open_meteo, freezer, hass_storage, records
+    )
+    pair = house.forecast.factors.split_by_hour[14]
+    assert pair.direct == pytest.approx(1.5)
+    assert pair.diffuse == pytest.approx(0.3)
+    point = next(
+        p
+        for p in house.forecast.irradiance
+        if p.start == datetime(2026, 10, 4, 14, 0, tzinfo=UTC)
+    )
+    slot = next(s for s in house.forecast.slots if s.start == point.start)
+    assert slot.watts == pytest.approx(1.5 * point.direct + 0.3 * point.diffuse)
+
+
+async def test_the_diagnostics_show_the_factors_and_the_pairs(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """The learned single factors and pairs per UTC hour are in the diagnostics."""
+    records = []
+    for i in range(24):
+        direct, diffuse = 50.0 + 40.0 * (i % 5), 60.0 + 25.0 * ((i * 3) % 7)
+        start = datetime(2026, 10, 3, 14, 0, tzinfo=UTC) - timedelta(days=i // 4)
+        records.append(
+            (
+                start + timedelta(minutes=15 * (i % 4)),
+                1.5 * direct + 0.3 * diffuse,
+                direct + diffuse,
+                False,
+                direct,
+                diffuse,
+            )
+        )
+    entry, _ = await setup(
+        hass, dtu_network, open_meteo, freezer, hass_storage, records
+    )
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    forecast = diagnostics["houses"][0]["forecast"]
+    assert forecast["records"] == 24
+    assert forecast["records_with_components"] == 24
+    assert forecast["factor_by_hour"]["14"] > 0
+    pair = forecast["component_factors_by_hour"]["14"]
+    assert pair["direct"] == pytest.approx(1.5)
+    assert pair["diffuse"] == pytest.approx(0.3)

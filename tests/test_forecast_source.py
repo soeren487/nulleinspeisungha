@@ -31,17 +31,18 @@ def client(hass: HomeAssistant, open_meteo: SimOpenMeteo) -> OpenMeteoClient:
     return OpenMeteoClient(async_get_clientsession(hass), "nulleinspeisung/test")
 
 
-async def test_the_request_asks_for_two_utc_days_of_quarter_hours(
+async def test_the_request_asks_for_three_utc_days_of_quarter_hours(
     client: OpenMeteoClient, open_meteo: SimOpenMeteo
 ) -> None:
-    """The request names the location, the quarter-hourly radiation and UTC times."""
+    """The request names the location, the quarter-hourly radiation with its direct
+    and diffuse parts, and UTC times."""
     await client.async_irradiance(51.0, 9.0)
     [(query, headers)] = open_meteo.requests
     assert query == {
         "latitude": "51.0",
         "longitude": "9.0",
-        "minutely_15": "shortwave_radiation",
-        "forecast_days": "2",
+        "minutely_15": "shortwave_radiation,direct_radiation,diffuse_radiation",
+        "forecast_days": "3",
         "timeformat": "unixtime",
         "timezone": "UTC",
     }
@@ -75,13 +76,73 @@ async def test_the_recorded_answer_is_parsed_in_order(
     assert points[42].irradiance == 526.0
 
 
+async def test_the_points_carry_the_direct_and_diffuse_parts(
+    client: OpenMeteoClient,
+) -> None:
+    """The parts of each point are the recorded ones and add up to the total."""
+    points = await client.async_irradiance(51.0, 9.0)
+    recorded = load_open_meteo_fixture("forecast.json")["minutely_15"]
+    assert [p.direct for p in points] == recorded["direct_radiation"]
+    assert [p.diffuse for p in points] == recorded["diffuse_radiation"]
+    assert all(p.direct is not None and p.diffuse is not None for p in points)
+    assert all(abs(p.irradiance - p.direct - p.diffuse) <= 1.0 for p in points)
+
+
+def test_the_live_answer_of_three_days_adds_up() -> None:
+    """Answered by Open-Meteo for a generic location: 288 quarter-hours, and the
+    direct and diffuse parts add up to the shortwave radiation."""
+    answer = load_open_meteo_fixture("forecast_three_days.json")
+    points = parse_irradiance(answer)
+    assert len(points) == 288
+    assert (points[-1].start - points[0].start).total_seconds() == 287 * 900
+    assert all(p.direct is not None and p.diffuse is not None for p in points)
+    assert all(abs(p.irradiance - p.direct - p.diffuse) <= 1.0 for p in points)
+
+
+async def test_parts_without_a_value_are_unknown_not_zero(
+    client: OpenMeteoClient, open_meteo: SimOpenMeteo
+) -> None:
+    """A quarter-hour whose parts are null still gives a point, with ``None`` parts."""
+    block = open_meteo.answer["minutely_15"]
+    block["direct_radiation"][42] = None
+    block["diffuse_radiation"][43] = None
+    points = await client.async_irradiance(51.0, 9.0)
+    assert points[42].direct is None
+    assert points[42].diffuse is not None
+    assert points[43].direct is not None
+    assert points[43].diffuse is None
+    assert points[42].irradiance == 526.0
+
+
+def test_an_answer_without_the_parts_still_gives_the_total() -> None:
+    answer = {"minutely_15": {"time": [0, 900], "shortwave_radiation": [5.0, 6.0]}}
+    assert [tuple(p) for p in parse_irradiance(answer)] == [
+        (datetime(1970, 1, 1, tzinfo=UTC), 5.0, None, None),
+        (datetime(1970, 1, 1, 0, 15, tzinfo=UTC), 6.0, None, None),
+    ]
+
+
+def test_parts_of_another_length_are_an_error() -> None:
+    answer = {
+        "minutely_15": {
+            "time": [0, 900],
+            "shortwave_radiation": [5.0, 6.0],
+            "direct_radiation": [1.0],
+            "diffuse_radiation": [4.0, 5.0],
+        }
+    }
+    with pytest.raises(OpenMeteoError):
+        parse_irradiance(answer)
+
+
 async def test_points_are_sorted_by_start(
     client: OpenMeteoClient, open_meteo: SimOpenMeteo
 ) -> None:
     """An answer in a different order still gives points sorted by start."""
     block = open_meteo.answer["minutely_15"]
     block["time"].reverse()
-    block["shortwave_radiation"].reverse()
+    for name in ("shortwave_radiation", "direct_radiation", "diffuse_radiation"):
+        block[name].reverse()
     points = await client.async_irradiance(51.0, 9.0)
     assert [p.start for p in points] == sorted(p.start for p in points)
     assert points[0].irradiance == 0.0

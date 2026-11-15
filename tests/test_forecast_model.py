@@ -7,8 +7,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from custom_components.nulleinspeisung.forecast_model import (
+    ComponentFactors,
     Factors,
     HistoryRecord,
+    IrradiancePoint,
     convert,
     history_days,
     is_usable,
@@ -28,12 +30,16 @@ def rec(
     curtailed: bool = False,
     minute: int = 0,
     month: int = 9,
+    direct: float | None = None,
+    diffuse: float | None = None,
 ) -> HistoryRecord:
     return HistoryRecord(
         datetime(2026, month, day, hour, minute, tzinfo=UTC),
         production,
         irradiance,
         curtailed,
+        direct,
+        diffuse,
     )
 
 
@@ -175,7 +181,11 @@ def test_convert_makes_a_sorted_slot_per_irradiance_point() -> None:
     a = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
     slots = convert(
         factors,
-        [(a + timedelta(minutes=15), 100.0), (a, 400.0), (a + timedelta(hours=1), 0.0)],
+        [
+            IrradiancePoint(a + timedelta(minutes=15), 100.0),
+            IrradiancePoint(a, 400.0),
+            IrradiancePoint(a + timedelta(hours=1), 0.0),
+        ],
     )
     assert [(s.start, s.watts) for s in slots] == [
         (a, 200.0),
@@ -226,3 +236,210 @@ def test_days_are_utc_dates() -> None:
     b = [rec(2, 0, 1.0, 100.0, minute=m) for m in (0, 15, 30, 45)]
     assert history_days(a + b) == 0
     assert history_days([*a, rec(1, 23, 1.0, 100.0, minute=45)]) == 1
+
+
+# -- direct and diffuse -------------------------------------------------------
+
+A_DIRECT, A_DIFFUSE = 1.2, 0.4
+
+
+def split_records(
+    count: int = 30,
+    direct_factor: float = A_DIRECT,
+    diffuse_factor: float = A_DIFFUSE,
+    hour: int = 10,
+) -> list[HistoryRecord]:
+    """``count`` records of one hour made from known coefficients, with components
+    that vary independently of each other."""
+    records = []
+    for i in range(count):
+        direct = 20.0 + 37.0 * ((i * 7) % 11)
+        diffuse = 30.0 + 23.0 * ((i * 5) % 7)
+        records.append(
+            rec(
+                1 + i // 4,
+                hour,
+                direct_factor * direct + diffuse_factor * diffuse,
+                direct + diffuse,
+                minute=i % 4 * 15,
+                direct=direct,
+                diffuse=diffuse,
+            )
+        )
+    return records
+
+
+def test_known_coefficients_are_recovered_from_the_components() -> None:
+    factors = learn(split_records(), NOW)
+    assert factors is not None
+    pair = factors.split_by_hour[10]
+    assert pair.direct == pytest.approx(A_DIRECT)
+    assert pair.diffuse == pytest.approx(A_DIFFUSE)
+
+
+def test_the_single_factors_are_learned_exactly_as_without_components() -> None:
+    with_parts = split_records()
+    without = [
+        rec(r.start.day, 10, r.production, r.irradiance, minute=r.start.minute)
+        for r in with_parts
+    ]
+    a, b = learn(with_parts, NOW), learn(without, NOW)
+    assert a is not None
+    assert b is not None
+    assert a.by_hour == b.by_hour
+    assert a.overall == b.overall
+    assert b.split_by_hour == {}
+
+
+def test_the_pair_is_used_when_the_point_has_both_components() -> None:
+    factors = learn(split_records(), NOW)
+    assert factors is not None
+    at = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
+    assert production_for(factors, at, 300.0, 200.0, 100.0) == pytest.approx(
+        A_DIRECT * 200.0 + A_DIFFUSE * 100.0
+    )
+
+
+def test_a_point_without_components_uses_the_single_factor() -> None:
+    factors = learn(split_records(), NOW)
+    assert factors is not None
+    at = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
+    single = factors.by_hour[10] * 300.0
+    assert production_for(factors, at, 300.0) == pytest.approx(single)
+    assert production_for(factors, at, 300.0, 200.0, None) == pytest.approx(single)
+    assert production_for(factors, at, 300.0, None, 100.0) == pytest.approx(single)
+
+
+def test_an_hour_without_a_pair_uses_the_single_factor_with_components_given() -> None:
+    factors = Factors({10: 0.5}, 0.7, {11: ComponentFactors(1.0, 2.0)})
+    at = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
+    assert production_for(factors, at, 300.0, 200.0, 100.0) == pytest.approx(150.0)
+
+
+def test_the_pair_never_gives_a_negative_production() -> None:
+    factors = Factors({}, 1.0, {10: ComponentFactors(-1.0, -1.0)})
+    at = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
+    assert production_for(factors, at, 300.0, 200.0, 100.0) == 0.0
+    assert production_for(factors, at, 0.0, 200.0, 100.0) == 0.0
+
+
+def test_convert_uses_the_components_of_each_point() -> None:
+    factors = Factors({10: 0.5}, 0.5, {10: ComponentFactors(1.0, 0.0)})
+    a = datetime(2026, 10, 4, 10, 0, tzinfo=UTC)
+    slots = convert(
+        factors,
+        [
+            IrradiancePoint(a, 400.0, 300.0, 100.0),
+            IrradiancePoint(a + timedelta(minutes=15), 400.0),
+        ],
+    )
+    assert [s.watts for s in slots] == [300.0, 200.0]
+
+
+def test_too_few_records_fall_back_to_the_single_factor() -> None:
+    factors = learn(split_records(count=19), NOW)
+    assert factors is not None
+    assert factors.split_by_hour == {}
+    assert 10 in factors.by_hour
+    assert learn(split_records(count=20), NOW).split_by_hour.keys() == {10}
+
+
+def test_proportional_components_fall_back_to_the_single_factor() -> None:
+    """Direct always a third of the diffuse light: the two cannot be told apart."""
+    records = []
+    for i in range(30):
+        diffuse = 50.0 + 10.0 * (i % 9)
+        direct = diffuse / 3
+        records.append(
+            rec(
+                1 + i // 4,
+                10,
+                0.9 * direct + 0.5 * diffuse,
+                direct + diffuse,
+                minute=i % 4 * 15,
+                direct=direct,
+                diffuse=diffuse,
+            )
+        )
+    factors = learn(records, NOW)
+    assert factors is not None
+    assert factors.split_by_hour == {}
+
+
+def test_records_without_components_still_feed_the_single_factor() -> None:
+    old = [rec(1 + i // 4, 10, 300.0, 500.0, minute=i % 4 * 15) for i in range(40)]
+    factors = learn(old + split_records(count=10), NOW)
+    assert factors is not None
+    assert factors.split_by_hour == {}
+    assert factors.by_hour[10] > 0
+    assert learn(old, NOW).by_hour[10] == pytest.approx(0.6)
+    assert factors.by_hour[10] != pytest.approx(0.6)
+
+
+def test_only_records_with_both_components_count_towards_the_minimum() -> None:
+    old = [rec(1 + i // 4, 10, 300.0, 500.0, minute=i % 4 * 15) for i in range(40)]
+    halves = [
+        rec(
+            r.start.day,
+            10,
+            r.production,
+            r.irradiance,
+            minute=r.start.minute,
+            direct=r.direct,
+            diffuse=None,
+        )
+        for r in split_records(count=30)
+    ]
+    factors = learn(old + halves, NOW)
+    assert factors is not None
+    assert factors.split_by_hour == {}
+
+
+def test_curtailed_records_do_not_take_part_in_the_fit() -> None:
+    records = split_records(count=30)
+    records[:11] = [
+        HistoryRecord(r.start, 0.0, r.irradiance, True, r.direct, r.diffuse)
+        for r in records[:11]
+    ]
+    assert learn(records, NOW).split_by_hour == {}
+
+
+def test_a_negative_direct_coefficient_is_set_to_zero_and_diffuse_refitted() -> None:
+    """Production that falls with direct light: direct 0, diffuse fitted alone."""
+    records = split_records(direct_factor=-0.3, diffuse_factor=1.0)
+    pair = learn(records, NOW).split_by_hour[10]
+    assert pair.direct == 0.0
+    assert pair.diffuse > 0.0
+    sff = sum(r.diffuse**2 for r in records)
+    spf = sum(r.production * r.diffuse for r in records)
+    assert pair.diffuse == pytest.approx(spf / sff, rel=0.01)
+
+
+def test_a_negative_diffuse_coefficient_is_set_to_zero_and_direct_refitted() -> None:
+    records = split_records(direct_factor=1.0, diffuse_factor=-0.3)
+    pair = learn(records, NOW).split_by_hour[10]
+    assert pair.diffuse == 0.0
+    sdd = sum(r.direct**2 for r in records)
+    spd = sum(r.production * r.direct for r in records)
+    assert pair.direct == pytest.approx(spd / sdd, rel=0.01)
+
+
+def test_recent_records_weigh_more_in_the_fit() -> None:
+    """Old records made from other coefficients pull the pair less than new ones."""
+    old = [
+        HistoryRecord(
+            r.start - timedelta(days=28),
+            0.5 * r.direct + 0.1 * r.diffuse,
+            r.irradiance,
+            False,
+            r.direct,
+            r.diffuse,
+        )
+        for r in split_records(count=30)
+    ]
+    pair = learn(old + split_records(count=30), NOW + timedelta(days=0)).split_by_hour[
+        10
+    ]
+    # Old records are 28 days older (two half-lives) than records made 33 days ago.
+    assert 0.5 < pair.direct < A_DIRECT
+    assert 0.1 < pair.diffuse < A_DIFFUSE

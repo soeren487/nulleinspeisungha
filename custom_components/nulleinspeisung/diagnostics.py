@@ -40,6 +40,7 @@ from .const import (
     SUBENTRY_TYPE_DTU,
     SUBENTRY_TYPE_HOUSE,
 )
+from .forecast import HouseForecast
 from .house import House
 
 TO_REDACT = {
@@ -130,6 +131,9 @@ def _house(house: House, placeholder: _Placeholders) -> dict[str, Any]:
         "battery": _plain(house.battery) if house.battery is not None else None,
         "wanted_overrides": _plain(house.wanted_overrides),
     }
+    forecast = house.forecast
+    if forecast is not None:
+        result["forecast"] = _forecast(forecast)
     charging = house.grid_charging
     if charging is not None:
         result["grid_charging"] = {
@@ -153,6 +157,29 @@ def _house(house: House, placeholder: _Placeholders) -> dict[str, Any]:
             "reason": _plain(charging.reason()),
         }
     return result
+
+
+def _forecast(forecast: HouseForecast) -> dict[str, Any]:
+    """What the PV Forecast has learned: the factors of each UTC hour."""
+    factors = forecast.factors
+    return {
+        "usable": forecast.usable,
+        "history_days": forecast.history_days,
+        "records": len(forecast.history),
+        "records_with_components": sum(
+            1 for r in forecast.history if r.direct is not None
+        ),
+        "overall_factor": factors.overall if factors else None,
+        "factor_by_hour": _plain(factors.by_hour) if factors else {},
+        "component_factors_by_hour": (
+            {
+                str(hour): {"direct": pair.direct, "diffuse": pair.diffuse}
+                for hour, pair in sorted(factors.split_by_hour.items())
+            }
+            if factors
+            else {}
+        ),
+    }
 
 
 def _dtu(coordinator: Any, placeholder: _Placeholders) -> dict[str, Any]:

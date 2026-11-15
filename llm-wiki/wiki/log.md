@@ -1,5 +1,10 @@
 # Wiki Update Log
 
+## 2026-11-15
+
+* **Update**: [PV Forecast in the field](research/pv-forecast-field-check.md): remedies implemented in ticket 43. [Overview](project/overview.md) and [Development workflow](project/development-workflow.md): CI without the HACS check.
+* **Creation**: Added draft research page [PV Forecast in the field](research/pv-forecast-field-check.md): measured accuracy and three weaknesses.
+
 ## 2026-11-13
 * **Update**: [Requirements decisions](project/requirements-decisions.md) and this log: names of the battery-backed inverters moved to the private inventory. [Overview](project/overview.md): released up to 0.12.0.
 * **Update**: [Overview](project/overview.md): purpose without the sunrise rule, state (released up to 0.11.0, tickets 37 to 41 done and unreleased, 42 in work, 30 waiting, 16 and 23 closed), tools and CI.

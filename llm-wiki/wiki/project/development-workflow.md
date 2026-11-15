@@ -32,7 +32,7 @@ The main session orchestrates (it plans and reviews, as Opus) and may spawn sub-
 | Triage state | A `Status:` line per issue file, using the five default labels; see [triage-labels.md](../../../docs/agents/triage-labels.md)[^agent-docs] |
 | Domain glossary and decisions | `CONTEXT.md` and `docs/adr/` at the repo root, created when first needed; see [domain.md](../../../docs/agents/domain.md)[^agent-docs] |
 | Tests and linters | `uv run pytest`, `uv run ruff check . && uv run ruff format --check .`; see `CLAUDE.md` |
-| CI | `.github/workflows/ci.yml`: tests and linters on the pinned Home Assistant, the tests on the oldest supported Home Assistant, hassfest and HACS validation; on pushes to `main`, on pull requests and weekly |
+| CI | `.github/workflows/ci.yml`: tests and linters on the pinned Home Assistant, the tests on the oldest supported Home Assistant, hassfest validation (no HACS check, see the overview); on pushes to `main`, on pull requests and weekly |
 | Releases | Version bump in `manifest.json` and `pyproject.toml`, `CHANGELOG.md`, tag, push, GitHub release; the agent does all of it when a release is asked for |
 | Development tools | `tools/replay.py` (replay recorded days through the charging planner) and `tools/export_history.py` (export such days from Home Assistant); see `tools/README.md`. Real exports go to `llm-wiki/private/` |
 | Project knowledge and research | This wiki; conventions in [SCHEMA.md](../../SCHEMA.md) |

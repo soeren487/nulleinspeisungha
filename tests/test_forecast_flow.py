@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 from custom_components.nulleinspeisung.const import DOMAIN
@@ -426,3 +427,81 @@ async def test_a_house_without_pv_inverters_has_no_forecast(
     empty = await setup(hass, dtu_network, open_meteo, freezer, house=SimHouse("Home"))
     assert empty.state is ConfigEntryState.LOADED
     assert open_meteo.requests == []
+
+
+async def test_tomorrow_is_unknown_not_zero_when_the_irradiance_stops_early(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """At 00:10 local the two UTC days end at 01:45 on the day after tomorrow's
+    start: the sensor of tomorrow is unknown, today's is a sum."""
+    entry = await setup(
+        hass,
+        dtu_network,
+        open_meteo,
+        freezer,
+        prepared_history(),
+        hass_storage,
+        at=datetime(2026, 10, 4, 22, 10, tzinfo=UTC),
+    )
+    forecast = next(iter(entry.runtime_data.houses.values())).forecast
+    tomorrow = dt_util.as_local(dt_util.utcnow()).date() + timedelta(days=1)
+    assert forecast.energy_kwh(tomorrow) is None
+    assert state(hass, "sensor", "pv_forecast_tomorrow") == "unknown"
+    assert float(state(hass, "sensor", "pv_forecast_today")) > 1
+
+
+async def test_tomorrow_is_the_sum_when_three_days_are_known(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """With three UTC days the same moment gives tomorrow's sum."""
+    open_meteo.three_days()
+    await setup(
+        hass,
+        dtu_network,
+        open_meteo,
+        freezer,
+        prepared_history(),
+        hass_storage,
+        at=datetime(2026, 10, 4, 22, 10, tzinfo=UTC),
+    )
+    # Berlin is UTC+2 until 2026-10-25: tomorrow is the 5th 22:00Z to the 6th 22:00Z.
+    expected = expected_kwh(
+        open_meteo,
+        datetime(2026, 10, 5, 22, tzinfo=UTC),
+        datetime(2026, 10, 6, 22, tzinfo=UTC),
+    )
+    assert expected > 0
+    assert abs(float(state(hass, "sensor", "pv_forecast_tomorrow")) - expected) < 0.001
+
+
+async def test_today_still_has_a_value_in_the_afternoon(
+    hass: HomeAssistant,
+    dtu_network: DtuNetwork,
+    open_meteo: SimOpenMeteo,
+    hass_storage,
+    freezer,
+) -> None:
+    """The slots of the morning are kept, so the whole day is still known."""
+    await setup(
+        hass,
+        dtu_network,
+        open_meteo,
+        freezer,
+        prepared_history(),
+        hass_storage,
+        at=datetime(2026, 10, 4, 15, 7, tzinfo=UTC),
+    )
+    today = expected_kwh(
+        open_meteo,
+        datetime(2026, 10, 3, 22, tzinfo=UTC),
+        datetime(2026, 10, 4, 22, tzinfo=UTC),
+    )
+    assert abs(float(state(hass, "sensor", "pv_forecast_today")) - today) < 0.001

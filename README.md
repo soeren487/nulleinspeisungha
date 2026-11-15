@@ -10,7 +10,7 @@ Terms in capitals (House, Inverter Limit, Curtailment, Charging Plan, ...) are d
 
 ## Status
 
-Version 0.12.0 (see [CHANGELOG.md](CHANGELOG.md)). The control features are in production use on the owner's installation. Everything that sets inverter limits or writes to the battery is switchable per House.
+Version 0.12.1 (see [CHANGELOG.md](CHANGELOG.md)). The control features are in production use on the owner's installation. Everything that sets inverter limits or writes to the battery is switchable per House.
 
 ## Requirements
 
@@ -91,7 +91,7 @@ The plan counts on the PV Forecast, but a cloudy day would leave few cheap quart
 
 ### PV Forecast
 
-Per House from Open-Meteo irradiance at the House's location, converted to power by a model learned per hour of the day from the inverters' own production history, leaving out intervals in which the House was curtailing. It is usable after 14 days of history. Only a share of it is counted (default 70 %). Until it is usable, or with "Use PV forecast" off, no PV is counted and the plan is pessimistic about PV.
+Per House from Open-Meteo irradiance at the House's location, converted to power by a model learned per hour of the day from the inverters' own production history. Open-Meteo gives the direct and the diffuse part of the irradiance as well; where an hour's history is long enough to tell them apart (at least 20 quarter-hours with both parts), the hour has one factor for each, since a tilted array turns direct light into more power than diffuse light, otherwise one factor on the total. Of the history, samples are left out in which the House was curtailing a PV Inverter or had done so in the last minute, or in which a PV Inverter was unknown; a short curtailment no longer discards the whole quarter-hour. The forecast covers three days. "PV Forecast tomorrow" is unknown, not 0, while the forecast does not yet reach the end of that day. It is usable after 14 days of history. Only a share of it is counted (default 70 %). Until it is usable, or with "Use PV forecast" off, no PV is counted and the plan is pessimistic about PV.
 
 ### Expected Load
 
@@ -256,7 +256,7 @@ uv run pytest                                          # tests
 uv run ruff check . && uv run ruff format --check .    # lint and format check
 ```
 
-CI (GitHub Actions) runs the tests and linters, the tests against the oldest supported Home Assistant, a weekly run, and hassfest and HACS validation.
+CI (GitHub Actions) runs the tests and linters, the tests against the oldest supported Home Assistant, a weekly run, and hassfest validation.
 
 The scripts in [tools/](tools/README.md) are not part of the integration:
 

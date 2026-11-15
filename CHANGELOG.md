@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+## 0.12.1
+
+### Good to know
+
+- The existing production history is kept. The factors for direct and diffuse irradiance only appear once an hour of the day has 20 recorded quarter-hours with both parts, on clear and on dull days; until then the forecast is computed as before. The diagnostics of the entry show the learned factors under `forecast`.
+- "PV forecast tomorrow" can be unknown for a short time after a restart around midnight instead of showing 0.0 kWh.
+
+### Changed
+
+- **The PV Forecast learns two factors per hour: one for direct and one for diffuse irradiance.** With one factor on the total, dull days were overestimated by a factor of two and clear days underestimated (over three weeks in November the forecast was 28 % above production, up to 2.4 times on single dull days). Open-Meteo's direct and diffuse irradiance are now fetched and stored with each quarter-hour; an hour uses the pair once it has 20 quarter-hours that tell the two apart, and the single factor otherwise. The existing history is kept and still feeds the single factor; the pairs build up from now on. The diagnostics show the factors and pairs.
+- Samples, not quarter-hours, are dropped from the production history: a quarter-hour is recorded from its clean samples (every PV Inverter known, no PV Inverter held back at that moment or in the 60 seconds before) when they cover at least half of it. A short curtailment episode or a failed DTU poll no longer discards the quarter-hour, so the midday hours keep learning. A limit on a Battery-backed Inverter alone no longer counts as curtailment here.
+- The irradiance is fetched for three days instead of two.
+- CI: the HACS check is removed (it demands a licence and repository topics); hassfest stays.
+
 ### Fixed
+
+- "PV forecast tomorrow" showed 0.0 kWh between midnight and the first fetch after 00:00 UTC; it is now unknown until the forecast reaches the end of the day.
 
 - The integration passes Home Assistant's `hassfest` check: `paho-mqtt` is required as a minimum version instead of a pinned one, and the help text of the DTU address no longer contains a URL.
 

@@ -205,6 +205,21 @@ class HouseControl:
         )
 
     @property
+    def curtailing_pv(self) -> bool:
+        """Whether the House holds back a PV Inverter on purpose.
+
+        Like ``curtailing``, but a limit on a Battery-backed Inverter alone does
+        not count: what it is not allowed to deliver stays in its DC Battery, so
+        PV production is not held back.
+        """
+        pv = self._house.config.pv_inverters
+        return self.curtailment and any(
+            percent < FULL_LIMIT
+            for serial, percent in self._wanted.items()
+            if serial in pv
+        )
+
+    @property
     def limited_serials(self) -> frozenset[str]:
         """The Inverters the House has limited below 100 %."""
         return frozenset(s for s, p in self._sent.items() if p < FULL_LIMIT)
