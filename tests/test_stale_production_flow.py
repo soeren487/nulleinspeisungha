@@ -27,8 +27,8 @@ from tests.conftest import (
     setup_entry,
 )
 from tests.test_curtailment_flow import (
-    HALLE4,
     CARPORT,
+    HALLE4,
     _curtail,
     _dtu,
     _grid,
@@ -249,7 +249,9 @@ async def make_plant(
         dtu_network,
         dtu,
         houses=[
-            SimHouse("Home", inverters=[CARPORT, HALLE4], battery_backed=[HALLE4], gx=gx)
+            SimHouse(
+                "Home", inverters=[CARPORT, HALLE4], battery_backed=[HALLE4], gx=gx
+            )
         ],
     )
     house = next(iter(entry.runtime_data.houses.values()))

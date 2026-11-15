@@ -241,7 +241,9 @@ async def test_the_second_switch_needs_a_battery_and_a_topic(
         dtu_network,
         _dtu(),
         houses=[
-            SimHouse("Home", inverters=[CARPORT, HALLE4], gx=SimGx(), stored_switches=none)
+            SimHouse(
+                "Home", inverters=[CARPORT, HALLE4], gx=SimGx(), stored_switches=none
+            )
         ],
     )
     assert _switch(hass, CURTAILMENT) == "on"

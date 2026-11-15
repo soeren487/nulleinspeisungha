@@ -591,7 +591,12 @@ async def test_battery_backed_limit_sensor_only_exists_with_such_inverters(
     hass: HomeAssistant, dtu_network: DtuNetwork
 ) -> None:
     await _home(
-        hass, dtu_network, _dtu(300, 700), grid=0, battery_backed=(), inverters=(CARPORT,)
+        hass,
+        dtu_network,
+        _dtu(300, 700),
+        grid=0,
+        battery_backed=(),
+        inverters=(CARPORT,),
     )
     assert _entity(hass, "sensor", "inverter_limit") is not None
     assert _entity(hass, "sensor", "battery_backed_limit") is None

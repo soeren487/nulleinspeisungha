@@ -25,8 +25,8 @@ from tests.conftest import (
 )
 from tests.test_discharge_block_flow import TWO_CHEAP
 from tests.test_grid_charging_flow import (
-    HALLE4,
     CARPORT,
+    HALLE4,
     _clock,
     _dtu,
     _grid,

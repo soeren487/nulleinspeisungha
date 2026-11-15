@@ -531,7 +531,10 @@ async def test_settings_survive_a_reload(
     """Switch and numbers come back, and the loop uses them from its first run."""
     _grid(hass, -500)
     entry = await setup_entry(
-        hass, dtu_network, _dtu(), houses=[SimHouse("Home", inverters=[CARPORT, HALLE4])]
+        hass,
+        dtu_network,
+        _dtu(),
+        houses=[SimHouse("Home", inverters=[CARPORT, HALLE4])],
     )
     await _set(hass, "feed_in_setpoint", 200)
     await _set(hass, "update_interval", 20)
@@ -567,7 +570,10 @@ async def test_removing_the_loop_on_unload_sends_nothing(
     """Unloading the entry neither sends 100 % nor leaves a running loop."""
     _grid(hass, -500)
     entry = await setup_entry(
-        hass, dtu_network, _dtu(), houses=[SimHouse("Home", inverters=[CARPORT, HALLE4])]
+        hass,
+        dtu_network,
+        _dtu(),
+        houses=[SimHouse("Home", inverters=[CARPORT, HALLE4])],
     )
     await _curtail(hass)
     dtu_network.clear_limits()

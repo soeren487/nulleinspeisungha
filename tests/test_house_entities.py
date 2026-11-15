@@ -47,7 +47,9 @@ async def test_house_device_and_entities(
         hass,
         dtu_network,
         SimDtu.default(),
-        houses=[SimHouse("Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT])],
+        houses=[
+            SimHouse("Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT])
+        ],
     )
     assert entry.state is ConfigEntryState.LOADED
     device = dr.async_get(hass).async_get_device_by_identifier(

@@ -2,6 +2,7 @@
 
 ## 2026-11-15
 
+* **Update**: The git history was rewritten: serial numbers, inverter and DTU names and host names of the owner's installation are replaced by invented ones in all commits (test fixtures, tests, old wiki pages), and the former public copy of the installation inventory is removed from history. New fixtures must be sanitised before they are saved, serial numbers included.
 * **Update**: [PV Forecast in the field](research/pv-forecast-field-check.md): remedies implemented in ticket 43. [Overview](project/overview.md) and [Development workflow](project/development-workflow.md): CI without the HACS check.
 * **Creation**: Added draft research page [PV Forecast in the field](research/pv-forecast-field-check.md): measured accuracy and three weaknesses.
 

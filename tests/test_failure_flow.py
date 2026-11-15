@@ -12,10 +12,10 @@ from pytest_homeassistant_custom_component.common import async_mock_service
 from custom_components.nulleinspeisung.const import CONF_NOTIFY_TARGET, DOMAIN
 from tests.conftest import DtuNetwork, SimDtu, SimHouse, second_dtu, setup_entry
 from tests.test_curtailment_flow import (
-    HALLE4,
+    CARPORT,
     GARAGE_1,
     GARAGE_2,
-    CARPORT,
+    HALLE4,
     _curtail,
     _dtu,
     _entity,

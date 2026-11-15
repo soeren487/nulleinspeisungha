@@ -585,7 +585,9 @@ async def test_silent_battery_backed_inverters_are_not_restarted_by_day(
     """A DTU whose silent Inverters are all Battery-backed is fine."""
     sun.elevation = 30
     house = SimHouse(
-        "Home", inverters=[CARPORT, HALLE4, HALLE5], battery_backed=[CARPORT, HALLE4, HALLE5]
+        "Home",
+        inverters=[CARPORT, HALLE4, HALLE5],
+        battery_backed=[CARPORT, HALLE4, HALLE5],
     )
     await setup_entry(hass, dtu_network, stuck_dtu(), houses=[house])
     await advance(hass, freezer, 60)

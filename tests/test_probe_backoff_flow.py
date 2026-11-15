@@ -7,8 +7,8 @@ from homeassistant.core import HomeAssistant
 from custom_components.nulleinspeisung.house_control import MAXIMUM_BACKOFF
 from tests.conftest import DtuNetwork, SimGx
 from tests.test_battery_curtailment_flow import (
-    HALLE4,
     CARPORT,
+    HALLE4,
     _curtail,
     _grid,
     _home,

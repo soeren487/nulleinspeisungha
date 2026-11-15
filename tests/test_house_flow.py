@@ -414,7 +414,9 @@ async def test_the_sensors_are_stored_per_inverter_serial(
 ) -> None:
     entry = await setup_entry(hass, dtu_network, SimDtu.default())
     result = await _to_dc_step(hass, entry, [CARPORT, HALLE4])
-    result = await _next(hass, result, {LABEL_CARPORT: SENSORS_B, LABEL_HALLE4: SENSORS_A})
+    result = await _next(
+        hass, result, {LABEL_CARPORT: SENSORS_B, LABEL_HALLE4: SENSORS_A}
+    )
     assert result["step_id"] == "ac_battery"
     result = await _next(hass, result, {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -444,7 +446,9 @@ async def test_reconfigure_prefills_changes_and_clears_the_sensors(
         dtu_network,
         SimDtu.default(),
         houses=[
-            SimHouse("Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT, HALLE4])
+            SimHouse(
+                "Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT, HALLE4]
+            )
         ],
     )
     house = _house(entry, "Home")
@@ -480,7 +484,9 @@ async def test_reconfigure_prefills_changes_and_clears_the_sensors(
         HALLE4: SENSORS_B,
     }
     house = _house(entry, "Home")
-    await walk({LABEL_CARPORT: SENSORS_B}, {LABEL_CARPORT: SENSORS_B, LABEL_HALLE4: SENSORS_B})
+    await walk(
+        {LABEL_CARPORT: SENSORS_B}, {LABEL_CARPORT: SENSORS_B, LABEL_HALLE4: SENSORS_B}
+    )
     assert dict(_house(entry, "Home").data["dc_batteries"]) == {CARPORT: SENSORS_B}
     house = _house(entry, "Home")
     # clearing every field removes the mapping
@@ -502,7 +508,9 @@ async def test_an_inverter_no_longer_battery_backed_loses_its_entry(
         dtu_network,
         SimDtu.default(),
         houses=[
-            SimHouse("Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT, HALLE4])
+            SimHouse(
+                "Home", inverters=[CARPORT, HALLE4], battery_backed=[CARPORT, HALLE4]
+            )
         ],
     )
     house = _house(entry, "Home")

@@ -21,8 +21,8 @@ from tests.conftest import (
     setup_entry,
 )
 from tests.test_curtailment_flow import (
-    HALLE4,
     CARPORT,
+    HALLE4,
     _curtail,
     _dtu,
     _grid,
